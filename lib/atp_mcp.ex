@@ -1,3 +1,11 @@
+defmodule AtpMcp.AtpBehaviour do
+  @moduledoc false
+  @callback list_provers() :: [String.t()]
+  @callback query_system(String.t(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
+  @callback query_selected_systems(String.t(), [String.t()], keyword()) ::
+              {:ok, [{String.t(), any()}]} | {:error, any()}
+end
+
 defmodule AtpMcp do
   @moduledoc false
 
@@ -5,23 +13,53 @@ defmodule AtpMcp do
   # Started by Claude Code as a child process; reads newline-delimited
   # JSON-RPC 2.0 from stdin and writes responses to stdout.
 
+  # Resolved at call time so tests can swap the implementation without needing
+  # a compile-time config.
+  defp atp_client, do: Application.get_env(:atp_mcp, :atp_client, AtpClient.SystemOnTptp)
+
   def main(_args \\ []) do
+    # Escripts do not start OTP applications automatically; start the full
+    # atp_client tree (which brings up Finch and the Provers agent).
+    Application.ensure_all_started(:atp_client)
+
     :stdio
     |> IO.stream(:line)
     |> Enum.each(&process_line/1)
   end
 
-  defp process_line(line) do
+  # Parses one JSON-RPC line and returns the encoded response string, or nil
+  # for notifications and blank lines. Public so the test suite can drive it
+  # directly without capturing stdio.
+  @doc false
+  def handle_rpc(line) do
     trimmed = String.trim(line)
 
-    if trimmed != "" do
-      trimmed
-      |> Jason.decode!()
-      |> dispatch()
-      |> case do
-        nil -> :ok
-        response -> IO.puts(Jason.encode!(response))
+    if trimmed == "" do
+      nil
+    else
+      case Jason.decode(trimmed) do
+        {:ok, json} ->
+          json
+          |> dispatch()
+          |> case do
+            nil -> nil
+            response -> Jason.encode!(response)
+          end
+
+        {:error, _} ->
+          Jason.encode!(%{
+            jsonrpc: "2.0",
+            id: nil,
+            error: %{code: -32_700, message: "Parse error"}
+          })
       end
+    end
+  end
+
+  defp process_line(line) do
+    case handle_rpc(line) do
+      nil -> :ok
+      response -> IO.puts(response)
     end
   end
 
@@ -48,13 +86,20 @@ defmodule AtpMcp do
   end
 
   defp dispatch(%{"method" => "tools/call", "id" => id, "params" => params}) do
-    %{"name" => name, "arguments" => args} = params
+    name = Map.get(params, "name")
+    # "arguments" is optional per the MCP spec; default to an empty map so
+    # tools with no parameters (e.g. list_provers) work without the key.
+    args = Map.get(params, "arguments", %{})
 
     content =
-      try do
-        call_tool(name, args)
-      rescue
-        e -> "Error: #{Exception.message(e)}"
+      if is_binary(name) do
+        try do
+          call_tool(name, args)
+        rescue
+          e -> "Error: #{Exception.message(e)}"
+        end
+      else
+        "Error: missing required field 'name'"
       end
 
     %{
@@ -77,7 +122,7 @@ defmodule AtpMcp do
   # --- Tool implementations ---
 
   defp call_tool("list_provers", _args) do
-    AtpClient.SystemOnTptp.list_provers()
+    atp_client().list_provers()
     |> Enum.sort()
     |> Enum.join("\n")
   end
@@ -86,16 +131,20 @@ defmodule AtpMcp do
     raw = Map.get(args, "raw", false)
     opts = [raw: raw] ++ time_limit_opt(args)
 
-    case AtpClient.SystemOnTptp.query_system(problem, system_id, opts) do
+    case atp_client().query_system(problem, system_id, opts) do
       {:ok, result} -> format_result(result)
       {:error, reason} -> "Error: #{inspect(reason)}"
     end
   end
 
+  defp call_tool("run_prover", _args) do
+    "Error: run_prover requires 'problem' and 'system_id'"
+  end
+
   defp call_tool("compare_provers", %{"problem" => problem, "system_ids" => system_ids} = args) do
     opts = time_limit_opt(args)
 
-    case AtpClient.SystemOnTptp.query_selected_systems(problem, system_ids, opts) do
+    case atp_client().query_selected_systems(problem, system_ids, opts) do
       {:ok, results} ->
         results
         |> Enum.map_join("\n", fn {system, atp_result} ->
@@ -105,6 +154,10 @@ defmodule AtpMcp do
       {:error, reason} ->
         "Error: #{inspect(reason)}"
     end
+  end
+
+  defp call_tool("compare_provers", _args) do
+    "Error: compare_provers requires 'problem' and 'system_ids'"
   end
 
   defp call_tool(name, _args), do: "Unknown tool: #{name}"
