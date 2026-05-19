@@ -30,7 +30,7 @@ defmodule AtpMcp.MixProject do
     [
       {:atp_client, "~> 0.2"},
       {:jason, "~> 1.4"},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]
   end
 
