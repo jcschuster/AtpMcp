@@ -22,44 +22,24 @@ defmodule AtpMcp do
     # atp_client tree (which brings up Finch and the Provers agent).
     Application.ensure_all_started(:atp_client)
 
+    :ok = :io.setopts(:standard_io, encoding: :latin1)
+
     :stdio
-    |> IO.stream(:line)
+    |> IO.binstream(:line)
     |> Enum.each(&process_line/1)
   end
 
-  # Parses one JSON-RPC line and returns the encoded response string, or nil
-  # for notifications and blank lines. Public so the test suite can drive it
-  # directly without capturing stdio.
-  @doc false
-  def handle_rpc(line) do
+  defp process_line(line) do
     trimmed = String.trim(line)
 
-    if trimmed == "" do
-      nil
-    else
-      case Jason.decode(trimmed) do
-        {:ok, json} ->
-          json
-          |> dispatch()
-          |> case do
-            nil -> nil
-            response -> Jason.encode!(response)
-          end
-
-        {:error, _} ->
-          Jason.encode!(%{
-            jsonrpc: "2.0",
-            id: nil,
-            error: %{code: -32_700, message: "Parse error"}
-          })
+    if trimmed != "" do
+      trimmed
+      |> Jason.decode!()
+      |> dispatch()
+      |> case do
+        nil -> :ok
+        response -> IO.binwrite([Jason.encode!(response), "\n"])
       end
-    end
-  end
-
-  defp process_line(line) do
-    case handle_rpc(line) do
-      nil -> :ok
-      response -> IO.puts(response)
     end
   end
 
@@ -110,8 +90,9 @@ defmodule AtpMcp do
   end
 
   # Notifications have no id and need no response.
-  defp dispatch(%{"method" => method}) when method in ["notifications/initialized", "initialized"],
-    do: nil
+  defp dispatch(%{"method" => method})
+       when method in ["notifications/initialized", "initialized"],
+       do: nil
 
   defp dispatch(%{"id" => id}) do
     %{jsonrpc: "2.0", id: id, error: %{code: -32_601, message: "Method not found"}}

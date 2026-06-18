@@ -1,14 +1,14 @@
 defmodule AtpMcp.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @source_url "https://github.com/jcschuster/AtpMcp"
 
   def project do
     [
       app: :atp_mcp,
       version: @version,
-      elixir: "~> 1.19",
+      elixir: "~> 1.20",
       deps: deps(),
       escript: escript(),
       # Hex metadata
