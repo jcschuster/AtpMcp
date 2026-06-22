@@ -1,7 +1,7 @@
 defmodule AtpMcp.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/jcschuster/AtpMcp"
 
   def project do
@@ -28,7 +28,7 @@ defmodule AtpMcp.MixProject do
 
   defp deps do
     [
-      {:atp_client, "~> 0.2"},
+      {:atp_client, github: "jcschuster/AtpClient"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test}
