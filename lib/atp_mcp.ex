@@ -1,42 +1,3 @@
-defmodule AtpMcp.Backends.SystemOnTptp do
-  @moduledoc false
-  @callback list_provers() :: [String.t()]
-  @callback query(String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  @callback query_system(String.t(), String.t(), keyword()) ::
-              {:ok, any()} | {:error, any()}
-  @callback query_selected_systems(String.t(), [String.t()], keyword()) ::
-              {:ok, [{String.t(), any()}]} | {:error, any()}
-  @callback verify(keyword()) :: :ok | {:error, any()}
-  @callback label() :: String.t()
-end
-
-defmodule AtpMcp.Backends.Isabelle do
-  @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  @callback query(String.t(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  @callback verify(keyword()) :: :ok | {:error, any()}
-  @callback label() :: String.t()
-end
-
-defmodule AtpMcp.Backends.LocalExec do
-  @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  @callback verify(keyword()) :: :ok | {:error, any()}
-  @callback label() :: String.t()
-end
-
-defmodule AtpMcp.Backends.StarExec do
-  @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  @callback verify(keyword()) :: :ok | {:error, any()}
-  @callback label() :: String.t()
-end
-
-defmodule AtpMcp.Backends.Lint do
-  @moduledoc false
-  @callback analyze(String.t(), keyword()) :: AtpClient.Lint.Report.t()
-end
-
 defmodule AtpMcp do
   @moduledoc """
   MCP stdio server wrapping every `AtpClient` backend.
@@ -101,7 +62,7 @@ defmodule AtpMcp do
   alias AtpClient.Lint.{Diagnostic, Report}
 
   @protocol_version "2025-11-25"
-  @server_version Mix.Project.config()[:version] || "0.0.0"
+  @server_version Mix.Project.config()[:version]
 
   @default_backends %{
     "sotptp" => AtpClient.SystemOnTptp,
@@ -110,61 +71,47 @@ defmodule AtpMcp do
     "starexec" => AtpClient.StarExec
   }
 
-  # Resolved at call time so tests can inject mocks per backend.
-  defp sotptp, do: Application.get_env(:atp_mcp, :sotptp_backend, AtpClient.SystemOnTptp)
-  defp isabelle, do: Application.get_env(:atp_mcp, :isabelle_backend, AtpClient.Isabelle)
-  defp local_exec, do: Application.get_env(:atp_mcp, :local_exec_backend, AtpClient.LocalExec)
-  defp starexec, do: Application.get_env(:atp_mcp, :starexec_backend, AtpClient.StarExec)
-  defp lint, do: Application.get_env(:atp_mcp, :lint_backend, AtpClient.Lint)
+  @protocol_keys ~w(backend problem theory theory_name system_id system_ids)
+  @backend_enum Map.keys(@default_backends)
 
-  defp backend_registry do
-    %{
-      "sotptp" => sotptp(),
-      "isabelle" => isabelle(),
-      "local_exec" => local_exec(),
-      "starexec" => starexec()
-    }
-  end
+  # Resolved at call time so tests can inject mocks.
+  defp backends, do: Application.get_env(:atp_mcp, :backends, @default_backends)
+  defp lint, do: Application.get_env(:atp_mcp, :lint, AtpClient.Lint)
 
-  defp known_backend_names, do: @default_backends |> Map.keys() |> Enum.sort()
+  defp sotptp, do: Map.fetch!(backends(), "sotptp")
+  defp isabelle, do: Map.fetch!(backends(), "isabelle")
 
   def main(_args \\ []) do
     # Escripts do not start OTP applications automatically; bring up the
     # full atp_client tree (Finch, the Provers agent, etc.).
-    Application.ensure_all_started(:atp_client)
+    {:ok, _} = Application.ensure_all_started(:atp_client)
+
+    :ok = :io.setopts(:standard_io, encoding: :latin1)
 
     {:ok, _pid} =
-      AtpMcp.Runtime.start_link(
-        heartbeat_ms: Application.get_env(:atp_mcp, :heartbeat_ms, 5_000)
-      )
+      AtpMcp.Runtime.start_link(heartbeat_ms: Application.get_env(:atp_mcp, :heartbeat_ms, 5_000))
 
     :stdio
-    |> IO.stream(:line)
+    |> IO.binstream(:line)
     |> Enum.each(&AtpMcp.Runtime.deliver/1)
 
-    # Stdin closed. Wait for in-flight tool tasks to finish so their
-    # responses reach stdout before the BEAM exits.
     AtpMcp.Runtime.await_idle()
   end
 
-  @doc """
-  Synchronously process one JSON-RPC line and return the response JSON (or
-  `nil` for notifications, blank lines, and cancellations). Kept for tests
-  and downstream callers that prefer a pure-function entry point.
+  # --- JSON-RPC framing ---
 
-  `tools/call` runs the work inline — it does not start a Task. For the
-  concurrent + cancellable + progress-emitting path, use
-  `AtpMcp.Runtime.deliver/1`.
+  @doc """
+  Parse one JSON-RPC line and return the encoded response, or `nil` for
+  notifications and blank lines. Provided for tests that drive the
+  protocol synchronously without spinning up `AtpMcp.Runtime`.
   """
   @spec handle_rpc(String.t()) :: String.t() | nil
   def handle_rpc(line) do
-    trimmed = String.trim(line)
-
-    case trimmed do
+    case String.trim(line) do
       "" ->
         nil
 
-      _ ->
+      trimmed ->
         case Jason.decode(trimmed) do
           {:ok, json} -> render_sync(classify(json))
           {:error, _} -> Jason.encode!(parse_error())
@@ -174,27 +121,30 @@ defmodule AtpMcp do
 
   defp render_sync({:reply, response}), do: Jason.encode!(response)
 
-  defp render_sync({:tool_call, id, name, args, _token}),
-    do: Jason.encode!(tool_response(id, execute_tool(name, args)))
+  defp render_sync({:tool_call, id, name, args, _token}) do
+    Jason.encode!(tool_response(id, execute_tool(name, args)))
+  end
 
   defp render_sync({:cancel, _id}), do: nil
   defp render_sync(:noop), do: nil
 
+  @doc false
+  @spec parse_error() :: map()
+  def parse_error do
+    %{jsonrpc: "2.0", id: nil, error: %{code: -32_700, message: "Parse error"}}
+  end
+
+  # --- JSON-RPC classification ---
+
   @doc """
-  Classify a decoded JSON-RPC message. The return value is one of:
-
-    * `{:reply, response}` — synchronous reply, encode and write;
-    * `{:tool_call, id, name, args, progress_token}` — start a Task;
-    * `{:cancel, id}` — cancel the in-flight Task for `id`;
-    * `:noop` — drop (notifications, unknown notifications, etc.).
-
-  Pure: never touches stdout, never mutates state. The runtime owns
-  side effects.
+  Decide what to do with one decoded JSON-RPC message. Pure: returns a
+  tag that `handle_rpc/1` (synchronous) and `AtpMcp.Runtime`
+  (asynchronous) interpret in their own way.
   """
   @spec classify(map()) ::
           {:reply, map()}
-          | {:tool_call, any(), String.t() | nil, map(), any()}
-          | {:cancel, any()}
+          | {:tool_call, term(), String.t() | nil, map(), term() | nil}
+          | {:cancel, term()}
           | :noop
   def classify(%{"method" => "initialize", "id" => id}) do
     {:reply,
@@ -239,36 +189,29 @@ defmodule AtpMcp do
 
   @doc """
   Run a tool by name. Catches exceptions and returns an `Error: …` string
-  in their place, matching the tool-result error convention. Pure with
-  respect to stdout — wraps `call_tool/2`.
+  in their place, matching the tool-result error convention.
   """
   @spec execute_tool(String.t() | nil, map()) :: String.t()
   def execute_tool(name, args) when is_binary(name) do
-    try do
-      call_tool(name, args)
-    rescue
-      e -> "Error: #{Exception.message(e)}"
-    end
+    call_tool(name, args)
+  rescue
+    e -> "Error: #{Exception.message(e)}"
   end
 
   def execute_tool(_name, _args), do: "Error: missing required field 'name'"
 
   @doc false
+  @spec tool_response(term(), String.t()) :: map()
   def tool_response(id, content) do
     %{jsonrpc: "2.0", id: id, result: %{content: [%{type: "text", text: content}]}}
-  end
-
-  @doc false
-  def parse_error do
-    %{jsonrpc: "2.0", id: nil, error: %{code: -32_700, message: "Parse error"}}
   end
 
   # --- Tool implementations ---
 
   defp call_tool("list_backends", _args) do
-    backend_registry()
+    backends()
     |> Enum.sort_by(fn {name, _} -> name end)
-    |> Enum.map_join("\n", fn {name, module} -> "#{name}\t#{safe_label(module)}" end)
+    |> Enum.map_join("\n", fn {name, module} -> "#{name}\t#{module.label()}" end)
   end
 
   defp call_tool("verify_backend", %{"backend" => name} = args) do
@@ -288,14 +231,8 @@ defmodule AtpMcp do
 
   defp call_tool("query_backend", %{"backend" => name, "problem" => problem} = args) do
     case resolve_backend(name) do
-      {:ok, module} ->
-        case module.query(problem, opts_from(args, name)) do
-          {:ok, result} -> format_result(result)
-          {:error, reason} -> "Error: #{inspect(reason)}"
-        end
-
-      {:error, message} ->
-        "Error: #{message}"
+      {:ok, module} -> render(module.query(problem, opts_from(args, name)))
+      {:error, message} -> "Error: #{message}"
     end
   end
 
@@ -310,13 +247,8 @@ defmodule AtpMcp do
   end
 
   defp call_tool("run_prover", %{"problem" => problem, "system_id" => system_id} = args) do
-    raw = Map.get(args, "raw", false)
-    opts = [raw: raw] ++ time_limit_opt(args)
-
-    case sotptp().query_system(problem, system_id, opts) do
-      {:ok, result} -> format_result(result)
-      {:error, reason} -> "Error: #{inspect(reason)}"
-    end
+    opts = [raw: Map.get(args, "raw", false)] ++ time_limit_opt(args)
+    render(sotptp().query_system(problem, system_id, opts))
   end
 
   defp call_tool("run_prover", _args) do
@@ -324,16 +256,9 @@ defmodule AtpMcp do
   end
 
   defp call_tool("compare_provers", %{"problem" => problem, "system_ids" => system_ids} = args) do
-    opts = time_limit_opt(args)
-
-    case sotptp().query_selected_systems(problem, system_ids, opts) do
-      {:ok, results} ->
-        Enum.map_join(results, "\n", fn {system, atp_result} ->
-          "#{system}: #{format_atp_result(atp_result)}"
-        end)
-
-      {:error, reason} ->
-        "Error: #{inspect(reason)}"
+    case sotptp().query_selected_systems(problem, system_ids, time_limit_opt(args)) do
+      {:ok, results} -> Enum.map_join(results, "\n", &format_compare_row/1)
+      {:error, reason} -> "Error: #{inspect(reason)}"
     end
   end
 
@@ -342,13 +267,8 @@ defmodule AtpMcp do
   end
 
   defp call_tool("prove_isabelle", %{"theory" => theory, "theory_name" => name} = args) do
-    raw = Map.get(args, "raw", false)
-    opts = [raw: raw] ++ isabelle_opts(args)
-
-    case isabelle().query(theory, name, opts) do
-      {:ok, result} -> format_result(result)
-      {:error, reason} -> "Error: #{inspect(reason)}"
-    end
+    opts = [raw: Map.get(args, "raw", false)] ++ opts_from(args, "isabelle")
+    render(isabelle().query(theory, name, opts))
   end
 
   defp call_tool("prove_isabelle", _args) do
@@ -356,8 +276,7 @@ defmodule AtpMcp do
   end
 
   defp call_tool("lint_problem", %{"problem" => problem} = args) do
-    report = lint().analyze(problem, lint_opts(args))
-    format_lint_report(report)
+    problem |> lint().analyze(lint_opts(args)) |> format_lint_report()
   end
 
   defp call_tool("lint_problem", _args) do
@@ -366,38 +285,27 @@ defmodule AtpMcp do
 
   defp call_tool(name, _args), do: "Unknown tool: #{name}"
 
-  # --- Helpers ---
+  # --- Backend resolution and option forwarding ---
 
   defp resolve_backend(name) when is_binary(name) do
-    case Map.fetch(backend_registry(), name) do
+    case Map.fetch(backends(), name) do
       {:ok, module} ->
         {:ok, module}
 
       :error ->
-        {:error,
-         "unknown backend #{inspect(name)}; known: " <> Enum.join(known_backend_names(), ", ")}
+        known = backends() |> Map.keys() |> Enum.sort() |> Enum.join(", ")
+        {:error, "unknown backend #{inspect(name)}; known: " <> known}
     end
   end
 
   defp resolve_backend(_), do: {:error, "backend must be a string"}
 
-  defp safe_label(module) do
-    _ = Code.ensure_loaded(module)
-
-    if function_exported?(module, :label, 0) do
-      module.label()
-    else
-      Atom.to_string(module)
-    end
-  end
-
   # Strip MCP-protocol keys before forwarding the remainder as a keyword list
   # of per-call backend overrides. Each backend reads what it understands.
-  @protocol_keys ~w(backend problem theory theory_name system_id system_ids)
   defp opts_from(args, "sotptp"), do: opts_from_filtered(args, [:time_limit_sec, :raw, :url])
 
-  defp opts_from(args, "isabelle"),
-    do:
+  defp opts_from(args, "isabelle") do
+    filtered =
       opts_from_filtered(args, [
         :session,
         :host,
@@ -408,7 +316,9 @@ defmodule AtpMcp do
         :use_theories_timeout_ms,
         :raw
       ])
-      |> rename_key(:timeout_ms, :use_theories_timeout_ms, args)
+
+    rename_key(filtered, :timeout_ms, :use_theories_timeout_ms, args)
+  end
 
   defp opts_from(args, "local_exec"),
     do: opts_from_filtered(args, [:binary, :args, :cpu_timeout_s, :wall_timeout_ms, :raw])
@@ -425,19 +335,14 @@ defmodule AtpMcp do
         :raw
       ])
 
-  defp opts_from(args, _),
-    do: opts_from_filtered(args, [:time_limit_sec, :raw])
+  defp opts_from(args, _), do: opts_from_filtered(args, [:time_limit_sec, :raw])
 
   defp opts_from_filtered(args, allowed) do
     args
     |> Map.drop(@protocol_keys)
     |> Enum.reduce([], fn {key, value}, acc ->
       atom = safe_to_atom(key)
-
-      cond do
-        atom in allowed -> [{atom, value} | acc]
-        true -> acc
-      end
+      if atom in allowed, do: [{atom, value} | acc], else: acc
     end)
   end
 
@@ -448,8 +353,6 @@ defmodule AtpMcp do
     end
   end
 
-  defp safe_to_atom(key) when is_atom(key), do: key
-
   defp safe_to_atom(key) when is_binary(key) do
     String.to_existing_atom(key)
   rescue
@@ -459,15 +362,8 @@ defmodule AtpMcp do
   defp time_limit_opt(%{"time_limit_sec" => t}) when is_integer(t), do: [time_limit_sec: t]
   defp time_limit_opt(_), do: []
 
-  defp isabelle_opts(args), do: opts_from(args, "isabelle")
-
   defp lint_opts(%{"backends" => backends}) when is_list(backends) do
-    parsed =
-      backends
-      |> Enum.map(&parse_lint_backend/1)
-      |> Enum.reject(&is_nil/1)
-
-    case parsed do
+    case Enum.flat_map(backends, &parse_lint_backend/1) do
       [] -> []
       list -> [backends: list]
     end
@@ -475,12 +371,17 @@ defmodule AtpMcp do
 
   defp lint_opts(_), do: []
 
-  defp parse_lint_backend("local"), do: :local
-  defp parse_lint_backend("tptp4x"), do: :tptp4x
-  defp parse_lint_backend(_), do: nil
+  defp parse_lint_backend("local"), do: [:local]
+  defp parse_lint_backend("tptp4x"), do: [:tptp4x]
+  defp parse_lint_backend(_), do: []
 
-  defp format_atp_result({:ok, status}), do: format_result(status)
-  defp format_atp_result({:error, reason}), do: "error(#{inspect(reason)})"
+  # --- Result formatting ---
+
+  defp render({:ok, result}), do: format_result(result)
+  defp render({:error, reason}), do: "Error: #{inspect(reason)}"
+
+  defp format_compare_row({system, {:ok, status}}), do: "#{system}: #{format_result(status)}"
+  defp format_compare_row({system, {:error, reason}}), do: "#{system}: error(#{inspect(reason)})"
 
   defp format_result(:thm), do: "Theorem"
   defp format_result(:sat), do: "Satisfiable"
@@ -495,16 +396,19 @@ defmodule AtpMcp do
 
   defp format_lint_report(%Report{diagnostics: [], symbols: []}), do: "OK (no diagnostics)"
 
-  defp format_lint_report(%Report{diagnostics: [], symbols: syms}),
-    do: "OK (no diagnostics)\n\n" <> format_symbols(syms)
-
   defp format_lint_report(%Report{diagnostics: diags, symbols: syms}) do
-    diag_text = Enum.map_join(diags, "\n", &format_diagnostic/1)
+    [diagnostics_section(diags), symbols_section(syms)]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+  end
 
-    case syms do
-      [] -> diag_text
-      _ -> diag_text <> "\n\n" <> format_symbols(syms)
-    end
+  defp diagnostics_section([]), do: "OK (no diagnostics)"
+  defp diagnostics_section(diags), do: Enum.map_join(diags, "\n", &format_diagnostic/1)
+
+  defp symbols_section([]), do: ""
+
+  defp symbols_section(symbols) do
+    "Symbols:\n" <> Enum.map_join(symbols, "\n", &format_symbol/1)
   end
 
   defp format_diagnostic(%Diagnostic{
@@ -518,19 +422,12 @@ defmodule AtpMcp do
     "#{line}:#{column} [#{severity}]#{source_tag} #{message}"
   end
 
-  defp format_symbols(symbols) do
-    body =
-      Enum.map_join(symbols, "\n", fn sym ->
-        type = if sym.type, do: " : #{sym.type}", else: ""
-        "  #{sym.name}#{type} (#{sym.kind} at #{sym.line}:#{sym.column})"
-      end)
-
-    "Symbols:\n" <> body
+  defp format_symbol(sym) do
+    type = if sym.type, do: " : #{sym.type}", else: ""
+    "  #{sym.name}#{type} (#{sym.kind} at #{sym.line}:#{sym.column})"
   end
 
   # --- MCP tool schemas ---
-
-  @backend_enum ~w(sotptp isabelle local_exec starexec)
 
   defp tool_schemas do
     [

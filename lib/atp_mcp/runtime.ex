@@ -56,8 +56,6 @@ defmodule AtpMcp.Runtime do
 
   use GenServer
 
-  require Logger
-
   @default_heartbeat_ms 5_000
 
   defmodule Entry do
@@ -103,8 +101,12 @@ defmodule AtpMcp.Runtime do
   @spec await_idle(GenServer.server(), non_neg_integer()) :: :ok
   def await_idle(server \\ __MODULE__, poll_ms \\ 25) do
     case GenServer.call(server, :inflight_count) do
-      0 -> :ok
-      _ -> Process.sleep(poll_ms); await_idle(server, poll_ms)
+      0 ->
+        :ok
+
+      _ ->
+        Process.sleep(poll_ms)
+        await_idle(server, poll_ms)
     end
   end
 
@@ -273,9 +275,11 @@ defmodule AtpMcp.Runtime do
 
   # --- Helpers ---
 
-  defp write_line(:stdio, line), do: IO.puts(line)
+  # `IO.binwrite` to match `main/1`'s latin1 encoding setopt — JSON-RPC is
+  # bytes, not Elixir-encoded strings.
+  defp write_line(:stdio, line), do: IO.binwrite([line, "\n"])
   defp write_line(pid, line) when is_pid(pid), do: send(pid, {:io_write, line})
-  defp write_line(device, line), do: IO.puts(device, line)
+  defp write_line(device, line), do: IO.binwrite(device, [line, "\n"])
 
   defp pop_by_ref(by_id, ref) do
     case Enum.find(by_id, fn {_, entry} -> entry.monitor_ref == ref end) do
