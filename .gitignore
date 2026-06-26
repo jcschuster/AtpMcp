@@ -20,7 +20,10 @@ erl_crash.dump
 *.ez
 
 # Ignore package tarball (built via "mix hex.build").
-shot_main-*.tar
+atp_mcp-*.tar
+
+# Escript binary built via "mix escript.build".
+/atp_mcp
 
 
 .claude-config

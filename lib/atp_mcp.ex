@@ -267,7 +267,7 @@ defmodule AtpMcp do
   end
 
   defp call_tool("prove_isabelle", %{"theory" => theory, "theory_name" => name} = args) do
-    opts = [raw: Map.get(args, "raw", false)] ++ opts_from(args, "isabelle")
+    opts = Keyword.put_new(opts_from(args, "isabelle"), :raw, false)
     render(isabelle().query(theory, name, opts))
   end
 

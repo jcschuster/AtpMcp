@@ -12,7 +12,9 @@ defmodule AtpMcp.MixProject do
       deps: deps(),
       escript: escript(),
       # Hex metadata
-      description: "MCP server exposing SystemOnTPTP theorem provers to Claude Code",
+      description:
+        "MCP server exposing the SystemOnTPTP, StarExec, Isabelle and LocalExec " <>
+          "theorem-prover backends from AtpClient over stdio JSON-RPC.",
       package: package(),
       docs: docs()
     ]
@@ -28,7 +30,7 @@ defmodule AtpMcp.MixProject do
 
   defp deps do
     [
-      {:atp_client, github: "jcschuster/AtpClient"},
+      {:atp_client, "~> 0.3"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test},
@@ -40,8 +42,11 @@ defmodule AtpMcp.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE)
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/v#{@version}/CHANGELOG.md"
+      },
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 
@@ -49,7 +54,8 @@ defmodule AtpMcp.MixProject do
     [
       main: "readme",
       source_url: @source_url,
-      extras: ["README.md"]
+      source_ref: "v#{@version}",
+      extras: ["README.md", "CHANGELOG.md"]
     ]
   end
 end

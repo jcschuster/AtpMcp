@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] — 2026-06-22
+## [0.2.0] — 2026-06-26
 
 ### Added
 
@@ -39,10 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - MCP protocol revision bumped from `2024-11-05` to `2025-11-25`.
-- `:atp_client` dependency switched from Hex `~> 0.2` to
-  `github: "jcschuster/AtpClient"` to consume the new unified backend
-  contract and cancellation API. Will move back to Hex once
-  `AtpClient` cuts a release containing both.
+- `:atp_client` dependency bumped from Hex `~> 0.2` to `~> 0.3` for the
+  unified backend contract and cancellation API.
+- Minimum Elixir version raised to `~> 1.20`.
 - Test mock surface split per backend: `AtpMcp.Backends.SystemOnTptp`,
   `Isabelle`, `LocalExec`, `StarExec`, `Lint` replace the single
   `AtpMcp.AtpBehaviour`.
