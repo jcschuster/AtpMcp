@@ -66,7 +66,7 @@ forwarded through to the backend's `verify/1`.
 #### `query_backend`
 
 Submits a TPTP-format problem to any backend through the unified
-`AtpClient.Backend.query/2` entry point and returns the normalized SZS
+`c:AtpClient.Backend.query/2` entry point and returns the normalized SZS
 result (`Theorem`, `Satisfiable`, `Timeout`, `Out of resources`, …).
 
 | Argument         | Type    | Required | Description                                                       |

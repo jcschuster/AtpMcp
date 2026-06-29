@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-29
+
+### Changed
+
+- `:atp_client` dependency bumped from Hex `~> 0.3` to `~> 0.4`. AtpMcp's
+  public surface is unchanged; the upgrade pulls in upstream correctness
+  fixes that flow through transparently:
+  - Isabelle multi-lemma jobs no longer mis-bucket Sledgehammer / Nitpick
+    output across message boundaries (e.g. `Nitpick found a model` next
+    to `Nitpick found no counterexample` no longer collapses to `:csat`;
+    `by <tactic>` failing on a `False` goal is no longer reported as
+    `:thm`). Per-lemma verdicts are now classified message-by-message
+    against body-line ranges supplied by the new
+    `AtpClient.Isabelle.lemma_specs/1`.
+  - `pos.file` filtering drops phantom lemma rows from the bundled
+    `TPTP.thy` and other transitively imported theories.
+  - Sledgehammer / Nitpick verdicts carry the lemma name from the source
+    body instead of surfacing as `name: nil`.
+
 ## [0.2.0] — 2026-06-26
 
 ### Added
@@ -42,8 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `:atp_client` dependency bumped from Hex `~> 0.2` to `~> 0.3` for the
   unified backend contract and cancellation API.
 - Minimum Elixir version raised to `~> 1.20`.
-- Test mock surface split per backend: `AtpMcp.Backends.SystemOnTptp`,
-  `Isabelle`, `LocalExec`, `StarExec`, `Lint` replace the single
+- Test mock surface split per backend: `AtpMcp.Backends.{SystemOnTptp,
+  Isabelle, LocalExec, StarExec, Lint}` replace the single
   `AtpMcp.AtpBehaviour`.
 - Internal restructure: `dispatch/1` replaced by pure `classify/1` +
   `execute_tool/2`. The synchronous `handle_rpc/1` path is retained for
@@ -67,5 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/call`, and silent acknowledgement of `notifications/initialized`.
 - Declared MCP protocol revision `2024-11-05`.
 
+[0.3.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.2.0
 [0.1.1]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.1.1
