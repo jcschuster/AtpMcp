@@ -51,6 +51,17 @@ For Claude Code, also approve it in `.claude/settings.json`:
 Lists every backend the server exposes (`sotptp`, `isabelle`, `local_exec`,
 `starexec`) with its human-readable label.
 
+#### `describe_szs`
+
+Returns a text reference for the
+[SZS Ontology](https://tptp.org/UserDocs/SZSOntology/) — the vocabulary
+every prover verdict is reported in. Enumerates each Success status
+(`Theorem`, `Unsatisfiable`, `Satisfiable`, `CounterSatisfiable`,
+`ContradictoryAxioms`, `Equivalent`, `Tautology`, …) and NoSuccess status
+(`GaveUp`, `Timeout`, `ResourceOut`, `MemoryOut`, `Forced`, `Inappropriate`,
+`InputError`, …) with a short gloss so an agent can decide what a verdict
+means without leaving the MCP session. Takes no arguments.
+
 #### `verify_backend`
 
 Probes a backend's configuration and reachability. Returns `OK` or a
@@ -66,8 +77,10 @@ forwarded through to the backend's `verify/1`.
 #### `query_backend`
 
 Submits a TPTP-format problem to any backend through the unified
-`c:AtpClient.Backend.query/2` entry point and returns the normalized SZS
-result (`Theorem`, `Satisfiable`, `Timeout`, `Out of resources`, …).
+`c:AtpClient.Backend.query/2` entry point and returns an SZS Ontology
+verdict (`Theorem`, `Unsatisfiable`, `Satisfiable`, `CounterSatisfiable`,
+`GaveUp`, `Timeout`, `ResourceOut`, …). Call `describe_szs` for the full
+vocabulary.
 
 | Argument         | Type    | Required | Description                                                       |
 | ---------------- | ------- | -------- | ----------------------------------------------------------------- |

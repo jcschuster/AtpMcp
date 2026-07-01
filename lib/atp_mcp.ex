@@ -10,9 +10,12 @@ defmodule AtpMcp do
   Generic, multi-backend (use the unified `AtpClient.Backend` contract):
 
     * `list_backends`  — enumerate configured backends and their labels;
+    * `describe_szs`   — return the SZS Ontology reference so an agent can
+      look up what each verdict (Theorem, CounterSatisfiable, ResourceOut,
+      …) means without leaving the MCP session;
     * `verify_backend` — probe a backend's configuration / reachability;
-    * `query_backend`  — submit a TPTP problem to any backend and get a
-      normalized SZS result.
+    * `query_backend`  — submit a TPTP problem to any backend and get an
+      SZS Ontology verdict.
 
   Backend-specific, kept because they expose surface the unified contract
   does not (system enumeration, multi-system fan-out, hand-written theories,
@@ -214,6 +217,8 @@ defmodule AtpMcp do
     |> Enum.map_join("\n", fn {name, module} -> "#{name}\t#{module.label()}" end)
   end
 
+  defp call_tool("describe_szs", _args), do: szs_ontology_text()
+
   defp call_tool("verify_backend", %{"backend" => name} = args) do
     case resolve_backend(name) do
       {:ok, module} ->
@@ -383,13 +388,16 @@ defmodule AtpMcp do
   defp format_compare_row({system, {:ok, status}}), do: "#{system}: #{format_result(status)}"
   defp format_compare_row({system, {:error, reason}}), do: "#{system}: error(#{inspect(reason)})"
 
-  defp format_result(:thm), do: "Theorem"
-  defp format_result(:sat), do: "Satisfiable"
-  defp format_result(:csat), do: "Countersatisfiable"
-  defp format_result(:timeout), do: "Timeout"
-  defp format_result(:out_of_resources), do: "Out of resources"
-  defp format_result(:gave_up), do: "Gave up"
-  defp format_result(:interrupted), do: "Interrupted"
+  # SZS-faithful rendering: AtpClient's ResultNormalization already normalises
+  # every backend's verdict to the snake_case form of an SZS Ontology status
+  # (`:theorem`, `:counter_satisfiable`, `:resource_out`, …). Converting back
+  # via `Macro.camelize/1` prints the canonical SZS name (`Theorem`,
+  # `CounterSatisfiable`, `ResourceOut`, …), so unknown-but-well-formed SZS
+  # additions pass through without a code change. See
+  # https://tptp.org/UserDocs/SZSOntology/ for the full ontology.
+  defp format_result(status) when is_atom(status),
+    do: status |> Atom.to_string() |> Macro.camelize()
+
   defp format_result(text) when is_binary(text), do: text
   defp format_result(map) when is_map(map), do: inspect(map, pretty: true, limit: :infinity)
   defp format_result(other), do: inspect(other)
@@ -427,6 +435,92 @@ defmodule AtpMcp do
     "  #{sym.name}#{type} (#{sym.kind} at #{sym.line}:#{sym.column})"
   end
 
+  # --- SZS ontology reference ---
+
+  # Compiled once at module load. Kept inline so the escript is
+  # self-contained — an agent that only has stdio access to the server can
+  # still look up what "CounterSatisfiable" or "ResourceOut" means without
+  # a network round-trip to tptp.org.
+  @szs_ontology_text """
+  SZS Ontology — TPTP status verdicts
+  ===================================
+
+  Every backend result surfaces one status atom from Geoff Sutcliffe's SZS
+  Ontology (https://tptp.org/UserDocs/SZSOntology/). Statuses split into two
+  top-level categories: Success (the prover produced a verdict about the
+  input) and NoSuccess (it did not). Within Success, verdicts differ in
+  what exactly the prover established — a Theorem (the conjecture follows
+  from the axioms) is not the same as Unsatisfiable (the clause set has no
+  model), even though a refutational prover reaches both through the same
+  saturation.
+
+  Success — the prover produced a verdict about the input
+  -------------------------------------------------------
+
+    Theorem                    Conjecture is a logical consequence of the
+                               axioms. What a Sledgehammer-style
+                               conjecture-directed prover reports on
+                               success.
+    Unsatisfiable              Clause set (typically negated conjecture +
+                               axioms) has no model. Reported by
+                               refutational provers on CNF input.
+    ContradictoryAxioms        Axioms alone are already inconsistent; the
+                               conjecture is a vacuous consequence.
+    Satisfiable                A model of the input was found. On a
+                               negated-conjecture pipeline this is a
+                               counter-model to the original goal.
+    CounterSatisfiable         The negation of the conjecture is
+                               satisfiable — i.e. the conjecture does not
+                               follow from the axioms.
+    Equivalent                 Two formulae proven logically equivalent.
+    EquiSatisfiable            Two formulae proven equi-satisfiable
+                               (equisat, not full equivalence).
+    Tautology                  A single formula proven valid.
+    TautologousConclusion      The conclusion alone is tautological.
+    WeakerConclusion           Axioms entail something strictly stronger
+                               than the stated conclusion.
+    CounterTheorem             Negation of the conjecture is a theorem.
+    CounterEquivalent          The two formulae are provably not
+                               equivalent.
+    EquivalentCounterTheorem   Negation of the conjecture is equivalent
+                               to another supplied formula.
+    NoConsequence              Proven that the conjecture does not follow
+                               and its negation does not follow either
+                               (independence result).
+
+  NoSuccess — the prover did not produce a verdict
+  ------------------------------------------------
+
+    GaveUp                     Prover concluded without a decision.
+    Unknown                    Verdict genuinely unknown to the prover.
+    Incomplete                 Prover ran to completion but its calculus is
+                               known to be incomplete for the input class.
+    Timeout                    Wall-clock or CPU time limit hit.
+    ResourceOut                Non-time resource limit (memory, term
+                               depth, clause count, …) hit.
+    MemoryOut                  Memory limit hit specifically.
+    Forced                     Prover killed externally (SIGINT/SIGKILL,
+                               remote cancel).
+    User                       User asked the prover to stop.
+    Inappropriate              Input is outside the prover's supported
+                               fragment (e.g. THF sent to a FOF-only
+                               prover).
+    Error                      Prover internal error.
+    InputError                 Prover rejected the input as malformed.
+
+  How AtpMcp renders statuses
+  ---------------------------
+
+  Backends produce statuses via `AtpClient.ResultNormalization`. AtpMcp
+  prints the SZS name verbatim (`Theorem`, `CounterSatisfiable`, `GaveUp`,
+  `ResourceOut`, …). Any SZS name that is not in the explicit table above
+  is permissively passed through in its snake-case → CamelCase form, so
+  future SZS additions like `EquivalentTheorem` render correctly without a
+  code change.
+  """
+
+  defp szs_ontology_text, do: @szs_ontology_text
+
   # --- MCP tool schemas ---
 
   defp tool_schemas do
@@ -435,6 +529,19 @@ defmodule AtpMcp do
         name: "list_backends",
         description:
           "List the AtpClient backends this MCP server exposes (sotptp, isabelle, local_exec, starexec) and their human-readable labels.",
+        inputSchema: %{type: "object", properties: %{}, required: []}
+      },
+      %{
+        name: "describe_szs",
+        description: """
+        Return a text description of the SZS Ontology
+        (https://tptp.org/UserDocs/SZSOntology/), the vocabulary every other
+        tool uses to report verdicts. Enumerates each Success status
+        (Theorem, Unsatisfiable, Satisfiable, CounterSatisfiable, …) and
+        NoSuccess status (GaveUp, Timeout, ResourceOut, Forced, …) with a
+        short gloss so an agent can decide what a verdict means without
+        leaving the MCP session.
+        """,
         inputSchema: %{type: "object", properties: %{}, required: []}
       },
       %{
@@ -461,10 +568,11 @@ defmodule AtpMcp do
         name: "query_backend",
         description: """
         Run a TPTP-format problem through any AtpClient backend and return the
-        normalized SZS-style result (Theorem, Satisfiable, Timeout, …). The
-        unified `AtpClient.Backend.query/2` entry point — each backend hides
-        its ceremony (session, prover selection, theory bookkeeping) behind
-        this call.
+        normalised SZS Ontology verdict (Theorem, Unsatisfiable, Satisfiable,
+        CounterSatisfiable, GaveUp, Timeout, ResourceOut, …). The unified
+        `AtpClient.Backend.query/2` entry point — each backend hides its
+        ceremony (session, prover selection, theory bookkeeping) behind this
+        call. Call `describe_szs` for the full ontology.
         """,
         inputSchema: %{
           type: "object",
@@ -494,7 +602,9 @@ defmodule AtpMcp do
         name: "run_prover",
         description: """
         Submit a TPTP-format problem to a specific prover on SystemOnTPTP.
-        Returns the SZS status (Theorem, Satisfiable, Timeout, …) or raw output.
+        Returns the SZS Ontology verdict (Theorem, Unsatisfiable, Satisfiable,
+        CounterSatisfiable, GaveUp, Timeout, ResourceOut, …) or raw output.
+        Call `describe_szs` for the full ontology.
         """,
         inputSchema: %{
           type: "object",
@@ -511,8 +621,9 @@ defmodule AtpMcp do
         name: "compare_provers",
         description: """
         Submit a TPTP problem to multiple SystemOnTPTP provers simultaneously
-        and report SZS results side-by-side. Useful for cross-checking or
-        finding the fastest prover for a problem class.
+        and report SZS Ontology verdicts side-by-side. Useful for
+        cross-checking or finding the fastest prover for a problem class.
+        Call `describe_szs` for the vocabulary used in the output.
         """,
         inputSchema: %{
           type: "object",

@@ -87,6 +87,7 @@ defmodule AtpMcpTest do
 
       assert names == [
                "compare_provers",
+               "describe_szs",
                "lint_problem",
                "list_backends",
                "list_provers",
@@ -155,6 +156,30 @@ defmodule AtpMcpTest do
   # list_backends / verify_backend / query_backend (unified contract)
   # ---------------------------------------------------------------------------
 
+  describe "describe_szs" do
+    test "returns a reference for both Success and NoSuccess statuses" do
+      result = tool_call(89, "describe_szs", %{})
+      text = text_of(result)
+      # Success entries
+      assert text =~ "Theorem"
+      assert text =~ "Unsatisfiable"
+      assert text =~ "CounterSatisfiable"
+      assert text =~ "ContradictoryAxioms"
+      # NoSuccess entries
+      assert text =~ "GaveUp"
+      assert text =~ "Timeout"
+      assert text =~ "ResourceOut"
+      assert text =~ "Forced"
+      # Source reference
+      assert text =~ "tptp.org"
+    end
+
+    test "ignores unknown arguments" do
+      result = tool_call(88, "describe_szs", %{"anything" => "here"})
+      assert text_of(result) =~ "SZS Ontology"
+    end
+  end
+
   describe "list_backends" do
     test "returns the registered backends and their labels, alphabetically" do
       expect(AtpMcp.MockSotptp, :label, fn -> "SystemOnTPTP" end)
@@ -206,7 +231,7 @@ defmodule AtpMcpTest do
     test "dispatches to the named backend's query/2" do
       expect(AtpMcp.MockLocalExec, :query, fn problem, _opts ->
         assert problem == @problem
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       result =
@@ -218,7 +243,7 @@ defmodule AtpMcpTest do
     test "forwards backend-appropriate options (sotptp time_limit_sec)" do
       expect(AtpMcp.MockSotptp, :query, fn _problem, opts ->
         assert opts[:time_limit_sec] == 15
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       tool_call(96, "query_backend", %{
@@ -231,7 +256,7 @@ defmodule AtpMcpTest do
     test "renames timeout_ms → use_theories_timeout_ms for isabelle" do
       expect(AtpMcp.MockIsabelle, :query, fn _problem, opts ->
         assert opts[:use_theories_timeout_ms] == 20_000
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       tool_call(97, "query_backend", %{
@@ -290,14 +315,26 @@ defmodule AtpMcpTest do
   # ---------------------------------------------------------------------------
 
   describe "run_prover — result formatting" do
+    # Statuses come from `AtpClient.ResultNormalization` as the snake_case
+    # form of an SZS Ontology verdict; AtpMcp renders the CamelCase SZS
+    # name verbatim. Covers a representative slice of both Success and
+    # NoSuccess.
     for {atom, label} <- [
-          thm: "Theorem",
-          csat: "Countersatisfiable",
-          sat: "Satisfiable",
+          theorem: "Theorem",
+          unsatisfiable: "Unsatisfiable",
+          satisfiable: "Satisfiable",
+          counter_satisfiable: "CounterSatisfiable",
+          contradictory_axioms: "ContradictoryAxioms",
+          equivalent: "Equivalent",
+          tautology: "Tautology",
+          gave_up: "GaveUp",
+          unknown: "Unknown",
           timeout: "Timeout",
-          out_of_resources: "Out of resources",
-          gave_up: "Gave up",
-          interrupted: "Interrupted"
+          resource_out: "ResourceOut",
+          memory_out: "MemoryOut",
+          forced: "Forced",
+          inappropriate: "Inappropriate",
+          input_error: "InputError"
         ] do
       test "#{inspect(atom)} formats as #{inspect(label)}" do
         atom = unquote(atom)
@@ -323,10 +360,12 @@ defmodule AtpMcpTest do
       assert text_of(result) == raw_output
     end
 
-    test "unrecognized atom falls back to inspect" do
-      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, :unknown_atom} end)
+    test "unknown SZS name passes through as CamelCase" do
+      # Mirrors AtpClient's permissive pass-through for SZS names outside
+      # the explicit table (e.g. `EquivalentTheorem` → `:equivalent_theorem`).
+      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, :equivalent_theorem} end)
       result = tool_call(28, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
-      assert text_of(result) == ":unknown_atom"
+      assert text_of(result) == "EquivalentTheorem"
     end
   end
 
@@ -334,7 +373,7 @@ defmodule AtpMcpTest do
     test "passes time_limit_sec through to query_system" do
       expect(AtpMcp.MockSotptp, :query_system, fn _, _, opts ->
         assert opts[:time_limit_sec] == 30
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       tool_call(30, "run_prover", %{
@@ -360,7 +399,7 @@ defmodule AtpMcpTest do
     test "omits time_limit_sec when not provided" do
       expect(AtpMcp.MockSotptp, :query_system, fn _, _, opts ->
         refute Keyword.has_key?(opts, :time_limit_sec)
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       tool_call(32, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
@@ -408,25 +447,27 @@ defmodule AtpMcpTest do
       expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, _, _ ->
         {:ok,
          [
-           {"E---2.0", {:ok, :thm}},
-           {"Vampire---4.5", {:ok, :timeout}}
+           {"E---2.0", {:ok, :theorem}},
+           {"Vampire---4.5", {:ok, :counter_satisfiable}},
+           {"Z3---4.12", {:ok, :timeout}}
          ]}
       end)
 
       result =
         tool_call(50, "compare_provers", %{
           "problem" => @problem,
-          "system_ids" => ["E---2.0", "Vampire---4.5"]
+          "system_ids" => ["E---2.0", "Vampire---4.5", "Z3---4.12"]
         })
 
-      assert text_of(result) == "E---2.0: Theorem\nVampire---4.5: Timeout"
+      assert text_of(result) ==
+               "E---2.0: Theorem\nVampire---4.5: CounterSatisfiable\nZ3---4.12: Timeout"
     end
 
     test "formats an error result from one prover" do
       expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, _, _ ->
         {:ok,
          [
-           {"E---2.0", {:ok, :thm}},
+           {"E---2.0", {:ok, :theorem}},
            {"Broken---1.0", {:error, :malformed_input}}
          ]}
       end)
@@ -508,7 +549,7 @@ defmodule AtpMcpTest do
 
   describe "prove_isabelle" do
     test "formats a normalized result" do
-      expect(AtpMcp.MockIsabelle, :query, fn _theory, _name, _opts -> {:ok, :thm} end)
+      expect(AtpMcp.MockIsabelle, :query, fn _theory, _name, _opts -> {:ok, :theorem} end)
 
       result =
         tool_call(70, "prove_isabelle", %{"theory" => @theory, "theory_name" => "Example"})

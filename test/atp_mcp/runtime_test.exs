@@ -216,7 +216,7 @@ defmodule AtpMcp.RuntimeTest do
         send(test_pid, {:mock_started, self()})
 
         receive do
-          :go -> {:ok, :thm}
+          :go -> {:ok, :theorem}
         end
       end)
 
@@ -257,7 +257,7 @@ defmodule AtpMcp.RuntimeTest do
         # Sleep longer than the heartbeat to give a stray emit a chance to
         # arrive.
         Process.sleep(150)
-        {:ok, :thm}
+        {:ok, :theorem}
       end)
 
       deliver(runtime, %{

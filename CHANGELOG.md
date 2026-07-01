@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-01
+
+### Added
+
+- `describe_szs` tool that returns the SZS Ontology
+  (https://tptp.org/UserDocs/SZSOntology/) as inline text — Success vs
+  NoSuccess split, per-status glosses (Theorem vs Unsatisfiable vs
+  CounterSatisfiable, GaveUp vs Timeout vs ResourceOut, …), and a note
+  on the CamelCase pass-through for future SZS additions. Agents driving
+  the MCP server can now look up what a verdict means without leaving
+  the session.
+
+### Changed
+
+- `:atp_client` dependency bumped from Hex `~> 0.4` to `~> 0.5`. Verdict
+  atoms now come from `AtpClient.ResultNormalization` and follow the
+  SZS Ontology verbatim (snake_case of the SZS name):
+  - Old ad-hoc tags `:thm`, `:sat`, `:csat`, `:out_of_resources`, and
+    `:interrupted` are gone; use `:theorem`, `:satisfiable`,
+    `:counter_satisfiable`, `:resource_out`, and `:forced` instead.
+  - Twelve additional Success statuses are now recognised — including
+    `:unsatisfiable`, `:contradictory_axioms`, `:equivalent`,
+    `:tautology`, `:tautologous_conclusion`, `:weaker_conclusion`,
+    `:no_consequence`, and the `counter_*` family.
+  - Additional NoSuccess statuses `:unknown`, `:incomplete`,
+    `:memory_out`, `:user`, `:inappropriate`, `:error`, and
+    `:input_error` are surfaced.
+- Rendered verdict labels now match SZS names exactly. Notable label
+  changes: `Countersatisfiable` → `CounterSatisfiable`,
+  `Out of resources` → `ResourceOut`, `Gave up` → `GaveUp`,
+  `Interrupted` → `Forced`. Unrecognised-but-well-formed SZS names pass
+  through as CamelCase (e.g. `:equivalent_theorem` → `EquivalentTheorem`)
+  so future SZS additions render without a code change.
+- Tool descriptions for `query_backend`, `run_prover`, and
+  `compare_provers` name the SZS verdict vocabulary and cross-reference
+  `describe_szs`.
+
 ## [0.3.0] — 2026-06-29
 
 ### Changed
@@ -86,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/call`, and silent acknowledgement of `notifications/initialized`.
 - Declared MCP protocol revision `2024-11-05`.
 
+[0.4.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.2.0
 [0.1.1]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.1.1
