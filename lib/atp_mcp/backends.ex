@@ -22,7 +22,8 @@ end
 defmodule AtpMcp.Backends.Isabelle do
   @moduledoc false
   @callback query(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  @callback query(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  @callback prove_theory(String.t(), String.t(), keyword()) ::
+              {:ok, term()} | {:error, term()}
   @callback verify(keyword()) :: :ok | {:error, term()}
   @callback label() :: String.t()
 end

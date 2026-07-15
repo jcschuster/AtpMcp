@@ -33,9 +33,12 @@ defmodule AtpMcp.Runtime do
       SIGKILLing the OS pid directly.
     * **StarExec** — a cancel-guard process issues `DELETE` against the
       remote job before letting go.
-    * **Isabelle** — the session is torn down, which drops any in-flight
-      `use_theories` task on the server side. The next call pays the
-      session-start cost again (typically a few seconds for `HOL`).
+    * **Isabelle** — no server-side cancel. Isabelle calls are dispatched
+      through the persistent `AtpMcp.IsabelleSession` GenServer, which
+      keeps processing the in-flight `use_theories` on behalf of the
+      (now-dead) caller so the shared session is not disrupted for
+      concurrent or subsequent calls. The `use_theories` timeout is
+      the only bound on remote work.
     * **SystemOnTPTP** — the local `Req`/`Finch` request errors out and
       the connection slot is released, but the **remote prover keeps
       running to its `TimeLimit`**. SOTPTP has no remote-cancel

@@ -38,13 +38,23 @@ defmodule AtpMcp do
     * Send `notifications/cancelled` carrying the in-flight request id
       to abort a call. The Task is killed, and each `AtpClient` backend
       tears down its upstream work in response (see
-      `AtpMcp.Runtime`'s moduledoc for per-backend details). SOTPTP is
-      the only backend that cannot truly cancel server-side — its
-      `:time_limit_sec` is the only bound on remote work.
+      `AtpMcp.Runtime`'s moduledoc for per-backend details). SOTPTP
+      and the shared Isabelle session cannot truly cancel server-side
+      — their configured timeouts are the only bound on remote work.
     * Set `_meta.progressToken` on `tools/call` to receive periodic
       `notifications/progress` frames while the call is in flight
       (heartbeat every five seconds by default; configurable via
       `:atp_mcp, :heartbeat_ms`).
+
+  ## Isabelle session lifetime
+
+  All isabelle traffic (`prove_isabelle` and `query_backend` with
+  `backend: "isabelle"`) is routed through `AtpMcp.IsabelleSession`,
+  which holds a single long-lived `AtpClient.Isabelle` session for
+  the lifetime of the MCP server. The first call pays the `HOL`
+  session-start cost; subsequent calls reuse it. The session is
+  configured from application env only — per-call `session` / `host`
+  / `port` / `password` overrides are no longer accepted.
 
   ## Forward note: MCP experimental Tasks primitive
 
@@ -69,7 +79,7 @@ defmodule AtpMcp do
 
   @default_backends %{
     "sotptp" => AtpClient.SystemOnTptp,
-    "isabelle" => AtpClient.Isabelle,
+    "isabelle" => AtpMcp.IsabelleSession,
     "local_exec" => AtpClient.LocalExec,
     "starexec" => AtpClient.StarExec
   }
@@ -90,6 +100,12 @@ defmodule AtpMcp do
     {:ok, _} = Application.ensure_all_started(:atp_client)
 
     :ok = :io.setopts(:standard_io, encoding: :latin1)
+
+    # Long-lived Isabelle session shared across every isabelle call.
+    # Opened lazily on first use so an unreachable Isabelle server does
+    # not block the MCP server from starting or from serving the other
+    # backends.
+    {:ok, _} = AtpMcp.IsabelleSession.start_link()
 
     {:ok, _pid} =
       AtpMcp.Runtime.start_link(heartbeat_ms: Application.get_env(:atp_mcp, :heartbeat_ms, 5_000))
@@ -272,8 +288,7 @@ defmodule AtpMcp do
   end
 
   defp call_tool("prove_isabelle", %{"theory" => theory, "theory_name" => name} = args) do
-    opts = Keyword.put_new(opts_from(args, "isabelle"), :raw, false)
-    render(isabelle().query(theory, name, opts))
+    render(isabelle().prove_theory(theory, name, opts_from(args, "isabelle")))
   end
 
   defp call_tool("prove_isabelle", _args) do
@@ -310,18 +325,7 @@ defmodule AtpMcp do
   defp opts_from(args, "sotptp"), do: opts_from_filtered(args, [:time_limit_sec, :raw, :url])
 
   defp opts_from(args, "isabelle") do
-    filtered =
-      opts_from_filtered(args, [
-        :session,
-        :host,
-        :port,
-        :password,
-        :local_dir,
-        :isabelle_dir,
-        :use_theories_timeout_ms,
-        :raw
-      ])
-
+    filtered = opts_from_filtered(args, [:use_theories_timeout_ms, :raw])
     rename_key(filtered, :timeout_ms, :use_theories_timeout_ms, args)
   end
 
@@ -642,11 +646,15 @@ defmodule AtpMcp do
       %{
         name: "prove_isabelle",
         description: """
-        Submit a hand-written Isabelle/HOL theory to a configured Isabelle
-        server. The theory text is written into the configured shared
-        directory and processed via `use_theories`. For TPTP/THF problems use
-        `query_backend` with `backend: "isabelle"` instead — that routes
-        through `query_tptp`.
+        Submit a hand-written Isabelle/HOL theory to the Isabelle server
+        configured for this MCP server. The theory text is written into the
+        configured shared directory and processed via `use_theories` on the
+        long-lived session held by `AtpMcp.IsabelleSession` (session name,
+        host, port, and credentials all come from application config — they
+        are fixed for the lifetime of the server and cannot be overridden
+        per call). For TPTP/THF problems use `query_backend` with
+        `backend: "isabelle"` instead — that routes through `query_tptp` on
+        the same shared session.
         """,
         inputSchema: %{
           type: "object",
@@ -656,9 +664,6 @@ defmodule AtpMcp do
               type: "string",
               description: "Theory name (also used as the .thy filename)"
             },
-            session: %{type: "string", description: "Override the Isabelle session name"},
-            host: %{type: "string", description: "Override the Isabelle host"},
-            port: %{type: "integer", description: "Override the Isabelle port"},
             timeout_ms: %{
               type: "integer",
               description: "Overall use_theories timeout in milliseconds"

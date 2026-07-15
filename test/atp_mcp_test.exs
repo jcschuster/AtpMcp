@@ -549,7 +549,9 @@ defmodule AtpMcpTest do
 
   describe "prove_isabelle" do
     test "formats a normalized result" do
-      expect(AtpMcp.MockIsabelle, :query, fn _theory, _name, _opts -> {:ok, :theorem} end)
+      expect(AtpMcp.MockIsabelle, :prove_theory, fn _theory, _name, _opts ->
+        {:ok, :theorem}
+      end)
 
       result =
         tool_call(70, "prove_isabelle", %{"theory" => @theory, "theory_name" => "Example"})
@@ -557,15 +559,17 @@ defmodule AtpMcpTest do
       assert text_of(result) == "Theorem"
     end
 
-    test "forwards session/host/port/timeout/raw options" do
-      expect(AtpMcp.MockIsabelle, :query, fn theory, name, opts ->
+    test "forwards timeout_ms (renamed) and raw options; drops host/port/session" do
+      expect(AtpMcp.MockIsabelle, :prove_theory, fn theory, name, opts ->
         assert theory == @theory
         assert name == "Example"
-        assert opts[:session] == "Main"
-        assert opts[:host] == "isabelle.example.org"
-        assert opts[:port] == 9999
         assert opts[:use_theories_timeout_ms] == 30_000
         assert opts[:raw] == true
+        # Per-call connection overrides are no longer forwarded — the
+        # shared session is opened from application config only.
+        refute Keyword.has_key?(opts, :session)
+        refute Keyword.has_key?(opts, :host)
+        refute Keyword.has_key?(opts, :port)
         {:ok, %{"ok" => true, "errors" => [], "nodes" => []}}
       end)
 
@@ -586,7 +590,7 @@ defmodule AtpMcpTest do
     end
 
     test "surfaces backend errors" do
-      expect(AtpMcp.MockIsabelle, :query, fn _, _, _ ->
+      expect(AtpMcp.MockIsabelle, :prove_theory, fn _, _, _ ->
         {:error, {:connect_failed, :econnrefused}}
       end)
 
@@ -594,6 +598,7 @@ defmodule AtpMcpTest do
         tool_call(72, "prove_isabelle", %{"theory" => @theory, "theory_name" => "Example"})
 
       assert String.starts_with?(text_of(result), "Error:")
+      assert text_of(result) =~ "econnrefused"
     end
 
     test "missing required args returns a descriptive error" do

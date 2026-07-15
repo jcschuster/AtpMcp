@@ -54,8 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to `Nitpick found no counterexample` no longer collapses to `:csat`;
     `by <tactic>` failing on a `False` goal is no longer reported as
     `:thm`). Per-lemma verdicts are now classified message-by-message
-    against body-line ranges supplied by the new
-    `AtpClient.Isabelle.lemma_specs/1`.
+    against body-line ranges.
   - `pos.file` filtering drops phantom lemma rows from the bundled
     `TPTP.thy` and other transitively imported theories.
   - Sledgehammer / Nitpick verdicts carry the lemma name from the source
