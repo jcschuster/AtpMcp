@@ -126,6 +126,12 @@ defmodule AtpMcp.IsabelleSession do
       {:ok, session} -> {:ok, %{state | session: session}}
       {:error, reason} -> {:error, reason, state}
     end
+  rescue
+    # `AtpClient.Config` signals missing/invalid settings by raising rather
+    # than returning {:error, _}. Letting that escape would terminate this
+    # GenServer -- and, since it is linked to the escript's main process,
+    # the whole MCP server along with it. Report it to the caller instead.
+    e -> {:error, {:config_error, Exception.message(e)}, state}
   end
 
   defp session_alive?(session) do

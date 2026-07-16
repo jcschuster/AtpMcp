@@ -104,8 +104,13 @@ defmodule AtpMcp do
     # Long-lived Isabelle session shared across every isabelle call.
     # Opened lazily on first use so an unreachable Isabelle server does
     # not block the MCP server from starting or from serving the other
-    # backends.
-    {:ok, _} = AtpMcp.IsabelleSession.start_link()
+    # backends. Supervised rather than linked directly to main: a crash in
+    # the session must never take the other backends' tools down with it.
+    {:ok, _} =
+      Supervisor.start_link([AtpMcp.IsabelleSession],
+        strategy: :one_for_one,
+        name: AtpMcp.Supervisor
+      )
 
     {:ok, _pid} =
       AtpMcp.Runtime.start_link(heartbeat_ms: Application.get_env(:atp_mcp, :heartbeat_ms, 5_000))
@@ -206,65 +211,80 @@ defmodule AtpMcp do
 
   def classify(_), do: :noop
 
-  @doc """
-  Run a tool by name. Catches exceptions and returns an `Error: …` string
-  in their place, matching the tool-result error convention.
+  @typedoc """
+  Outcome of a tool call: the text to render, tagged with whether it
+  represents a failure. `:error` results are reported to the client with
+  `isError: true` alongside the usual `Error: …` text.
   """
-  @spec execute_tool(String.t() | nil, map()) :: String.t()
+  @type tool_result :: {:ok, String.t()} | {:error, String.t()}
+
+  @doc """
+  Run a tool by name. Catches exceptions and returns them as `{:error,
+  "Error: …"}`, matching the tool-result error convention.
+  """
+  @spec execute_tool(String.t() | nil, map()) :: tool_result()
   def execute_tool(name, args) when is_binary(name) do
     call_tool(name, args)
   rescue
-    e -> "Error: #{Exception.message(e)}"
+    e -> {:error, "Error: #{Exception.message(e)}"}
   end
 
-  def execute_tool(_name, _args), do: "Error: missing required field 'name'"
+  def execute_tool(_name, _args), do: {:error, "Error: missing required field 'name'"}
 
   @doc false
-  @spec tool_response(term(), String.t()) :: map()
-  def tool_response(id, content) do
+  @spec tool_response(term(), tool_result()) :: map()
+  def tool_response(id, {:ok, content}) do
     %{jsonrpc: "2.0", id: id, result: %{content: [%{type: "text", text: content}]}}
+  end
+
+  # MCP reports tool-level failures in-band: a normal result carrying
+  # isError, not a JSON-RPC error (those are reserved for protocol faults).
+  def tool_response(id, {:error, content}) do
+    %{jsonrpc: "2.0", id: id, result: %{content: [%{type: "text", text: content}], isError: true}}
   end
 
   # --- Tool implementations ---
 
   defp call_tool("list_backends", _args) do
-    backends()
-    |> Enum.sort_by(fn {name, _} -> name end)
-    |> Enum.map_join("\n", fn {name, module} -> "#{name}\t#{module.label()}" end)
+    {:ok,
+     backends()
+     |> Enum.sort_by(fn {name, _} -> name end)
+     |> Enum.map_join("\n", fn {name, module} -> "#{name}\t#{module.label()}" end)}
   end
 
-  defp call_tool("describe_szs", _args), do: szs_ontology_text()
+  defp call_tool("describe_szs", _args), do: {:ok, szs_ontology_text()}
 
   defp call_tool("verify_backend", %{"backend" => name} = args) do
     case resolve_backend(name) do
       {:ok, module} ->
         case module.verify(opts_from(args, name)) do
-          :ok -> "OK"
-          {:error, reason} -> "Error: #{inspect(reason)}"
+          :ok -> {:ok, "OK"}
+          {:error, reason} -> {:error, "Error: #{inspect(reason)}"}
         end
 
       {:error, message} ->
-        "Error: #{message}"
+        {:error, "Error: #{message}"}
     end
   end
 
-  defp call_tool("verify_backend", _args), do: "Error: verify_backend requires 'backend'"
+  defp call_tool("verify_backend", _args), do: {:error, "Error: verify_backend requires 'backend'"}
 
   defp call_tool("query_backend", %{"backend" => name, "problem" => problem} = args) do
     case resolve_backend(name) do
       {:ok, module} -> render(module.query(problem, opts_from(args, name)))
-      {:error, message} -> "Error: #{message}"
+      {:error, message} -> {:error, "Error: #{message}"}
     end
   end
 
   defp call_tool("query_backend", _args) do
-    "Error: query_backend requires 'backend' and 'problem'"
+    {:error, "Error: query_backend requires 'backend' and 'problem'"}
   end
 
   defp call_tool("list_provers", _args) do
-    sotptp().list_provers()
-    |> Enum.sort()
-    |> Enum.join("\n")
+    {:ok,
+     sotptp().list_provers()
+     |> Enum.sort()
+     |> Enum.join("\n")}
   end
 
   defp call_tool("run_prover", %{"problem" => problem, "system_id" => system_id} = args) do
@@ -273,18 +293,19 @@ defmodule AtpMcp do
   end
 
   defp call_tool("run_prover", _args) do
-    "Error: run_prover requires 'problem' and 'system_id'"
+    {:error, "Error: run_prover requires 'problem' and 'system_id'"}
   end
 
-  defp call_tool("compare_provers", %{"problem" => problem, "system_ids" => system_ids} = args) do
+  defp call_tool("compare_provers", %{"problem" => problem, "system_ids" => system_ids} = args)
+       when is_list(system_ids) do
     case sotptp().query_selected_systems(problem, system_ids, time_limit_opt(args)) do
-      {:ok, results} -> Enum.map_join(results, "\n", &format_compare_row/1)
-      {:error, reason} -> "Error: #{inspect(reason)}"
+      {:ok, results} -> {:ok, format_compare_report(results, system_ids)}
+      {:error, reason} -> {:error, "Error: #{inspect(reason)}"}
     end
   end
 
   defp call_tool("compare_provers", _args) do
-    "Error: compare_provers requires 'problem' and 'system_ids'"
+    {:error, "Error: compare_provers requires 'problem' and 'system_ids'"}
   end
 
   defp call_tool("prove_isabelle", %{"theory" => theory, "theory_name" => name} = args) do
@@ -292,18 +313,18 @@ defmodule AtpMcp do
   end
 
   defp call_tool("prove_isabelle", _args) do
-    "Error: prove_isabelle requires 'theory' and 'theory_name'"
+    {:error, "Error: prove_isabelle requires 'theory' and 'theory_name'"}
   end
 
   defp call_tool("lint_problem", %{"problem" => problem} = args) do
-    problem |> lint().analyze(lint_opts(args)) |> format_lint_report()
+    {:ok, problem |> lint().analyze(lint_opts(args)) |> format_lint_report()}
   end
 
   defp call_tool("lint_problem", _args) do
-    "Error: lint_problem requires 'problem'"
+    {:error, "Error: lint_problem requires 'problem'"}
   end
 
-  defp call_tool(name, _args), do: "Unknown tool: #{name}"
+  defp call_tool(name, _args), do: {:error, "Unknown tool: #{name}"}
 
   # --- Backend resolution and option forwarding ---
 
@@ -386,8 +407,25 @@ defmodule AtpMcp do
 
   # --- Result formatting ---
 
-  defp render({:ok, result}), do: format_result(result)
-  defp render({:error, reason}), do: "Error: #{inspect(reason)}"
+  defp render({:ok, result}), do: {:ok, format_result(result)}
+  defp render({:error, reason}), do: {:error, "Error: #{inspect(reason)}"}
+
+  # SystemOnTPTP drops system ids it does not recognise ("WARNING: … does not
+  # exist - ignored") and returns no output block for them, so a requested
+  # prover can be missing from `results` entirely. Reporting the gap keeps the
+  # comparison honest: asking for N provers should never quietly answer for
+  # fewer.
+  defp format_compare_report(results, requested) do
+    returned = MapSet.new(results, fn {system, _} -> to_string(system) end)
+
+    missing =
+      requested
+      |> Enum.map(&to_string/1)
+      |> Enum.reject(&MapSet.member?(returned, &1))
+      |> Enum.map(&"#{&1}: no result returned (unknown or unavailable system)")
+
+    Enum.map_join(Enum.map(results, &format_compare_row/1) ++ missing, "\n", & &1)
+  end
 
   defp format_compare_row({system, {:ok, status}}), do: "#{system}: #{format_result(status)}"
   defp format_compare_row({system, {:error, reason}}), do: "#{system}: error(#{inspect(reason)})"
