@@ -1,0 +1,37 @@
+{
+  "title": "AtpMcp",
+  "upload_type": "software",
+  "version": "0.5.2",
+  "license": "MIT",
+  "description": "AtpMcp is a Model Context Protocol (MCP) server that exposes the SystemOnTPTP, StarExec, Isabelle and LocalExec theorem-prover backends of AtpClient as tools for language-model agents over stdio JSON-RPC.",
+  "creators": [
+    {
+      "name": "Schuster, Johannes",
+      "affiliation": "Otto-Friedrich-Universität Bamberg, Germany",
+      "orcid": "0009-0003-5339-7216"
+    }
+  ],
+  "keywords": [
+    "Model Context Protocol",
+    "MCP",
+    "automated theorem proving",
+    "language model agents",
+    "TPTP",
+    "Isabelle",
+    "Elixir",
+    "BEAM"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/jcschuster/AtpMcp",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "10.5281/zenodo.21839442",
+      "relation": "requires",
+      "scheme": "doi",
+      "resource_type": "software"
+    }
+  ]
+}

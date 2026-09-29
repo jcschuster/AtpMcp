@@ -1,7 +1,7 @@
 defmodule AtpMcp.MixProject do
   use Mix.Project
 
-  @version "0.5.1"
+  @version "0.5.2"
   @source_url "https://github.com/jcschuster/AtpMcp"
 
   def project do
@@ -46,7 +46,7 @@ defmodule AtpMcp.MixProject do
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/v#{@version}/CHANGELOG.md"
       },
-      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE)
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE CITATION.cff)
     ]
   end
 
