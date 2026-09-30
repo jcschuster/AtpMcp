@@ -1,5 +1,7 @@
 # AtpMcp
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23044595.svg)](https://doi.org/10.5281/zenodo.23044595)
+
 An [MCP](https://modelcontextprotocol.io) server that exposes
 [AtpClient](https://hex.pm/packages/atp_client)'s four theorem-prover
 backends — **SystemOnTPTP**, **StarExec**, **Isabelle**, and **LocalExec** —
