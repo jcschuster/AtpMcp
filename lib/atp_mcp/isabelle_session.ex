@@ -13,6 +13,17 @@ defmodule AtpMcp.IsabelleSession do
   the same `query/2`, `prove_theory/3`, `verify/1`, and `label/0` entry
   points the tool dispatch in `AtpMcp` calls, so no call site changes.
 
+  ## Which server
+
+  With `config :atp_client, :isabelle, password: …` set, the session
+  connects to that server (`host`/`port` from the same config). Without a
+  password, and with `isabelle` on `PATH`, it starts a resident server
+  named `atp_mcp` on a free port — or reuses one that is already running
+  under that name — and connects to it. The server outlives the MCP
+  process, so the next start skips the JVM spin-up; stop it with
+  `isabelle server -n atp_mcp -x`. Set `config :atp_mcp,
+  isabelle_autostart: false` to require a configured server.
+
   ## Concurrency
 
   Calls serialise through this GenServer's mailbox. `IsabelleClient.Shared`
@@ -35,6 +46,8 @@ defmodule AtpMcp.IsabelleSession do
   @behaviour AtpMcp.Backends.Isabelle
 
   alias AtpClient.Isabelle
+
+  @server_name "atp_mcp"
 
   # --- Public API ---
 
@@ -81,10 +94,7 @@ defmodule AtpMcp.IsabelleSession do
 
   def handle_call({:query, problem, opts}, _from, state) do
     with_session(state, opts, fn session, session_opts ->
-      case Isabelle.prove_tptp(session, problem, session_opts) do
-        {:ok, lemmas} -> aggregate_lemma_results(lemmas)
-        {:error, _} = err -> err
-      end
+      Isabelle.prove_tptp(session, problem, session_opts)
     end)
   end
 
@@ -122,8 +132,10 @@ defmodule AtpMcp.IsabelleSession do
   end
 
   defp ensure_session(state) do
-    case Isabelle.open_session([]) do
-      {:ok, session} -> {:ok, %{state | session: session}}
+    with {:ok, opts} <- server_opts(),
+         {:ok, session} <- Isabelle.open_session(opts) do
+      {:ok, %{state | session: session}}
+    else
       {:error, reason} -> {:error, reason, state}
     end
   rescue
@@ -134,18 +146,37 @@ defmodule AtpMcp.IsabelleSession do
     e -> {:error, {:config_error, Exception.message(e)}, state}
   end
 
-  defp session_alive?(session) do
-    session |> Isabelle.Session.client() |> Process.alive?()
+  # A configured password names a server someone else runs; without one, run
+  # our own. Re-running `isabelle server -n atp_mcp` against a live server
+  # only prints its coordinates, so this is also how a restarted MCP process
+  # finds the server it left behind.
+  defp server_opts do
+    case AtpClient.Config.fetch(:isabelle, :password, nil) do
+      nil -> local_server(Application.get_env(:atp_mcp, :isabelle_autostart, true))
+      _password -> {:ok, []}
+    end
   end
 
-  # Weakest-link aggregation mirroring `AtpClient.Isabelle.query/2`'s
-  # private aggregator — any non-`{:ok, :theorem}` lemma decides the
-  # collapsed verdict.
-  defp aggregate_lemma_results([]), do: {:ok, :gave_up}
+  # With auto-start off, `open_session/1` reports the missing password.
+  defp local_server(false), do: {:ok, []}
 
-  defp aggregate_lemma_results(lemmas) do
-    Enum.find_value(lemmas, {:ok, :theorem}, fn %{result: r} ->
-      if r != {:ok, :theorem}, do: r
-    end)
+  defp local_server(true) do
+    case IsabelleClient.start_server(server_name: @server_name, server_port: 0) do
+      {:ok, server} ->
+        {:ok, [host: server.host, port: server.port, password: server.password]}
+
+      {:error, :isabelle_not_found} ->
+        {:error,
+         {:no_isabelle_server,
+          "no `password` under `config :atp_client, :isabelle`, and no `isabelle` " <>
+            "on PATH to start a server with"}}
+
+      {:error, reason} ->
+        {:error, {:isabelle_server_start_failed, reason}}
+    end
+  end
+
+  defp session_alive?(session) do
+    session |> Isabelle.Session.client() |> Process.alive?()
   end
 end

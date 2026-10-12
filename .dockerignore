@@ -1,0 +1,5 @@
+*
+!mix.exs
+!mix.lock
+!config/
+!lib/

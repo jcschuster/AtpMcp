@@ -1,7 +1,7 @@
 {
   "title": "AtpMcp",
   "upload_type": "software",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "license": "MIT",
   "description": "AtpMcp is a Model Context Protocol (MCP) server that exposes the SystemOnTPTP, StarExec, Isabelle and LocalExec theorem-prover backends of AtpClient as tools for language-model agents over stdio JSON-RPC.",
   "creators": [
@@ -28,7 +28,13 @@
       "scheme": "url"
     },
     {
-      "identifier": "10.5281/zenodo.21839442",
+      "identifier": "10.5281/zenodo.21839441",
+      "relation": "requires",
+      "scheme": "doi",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "10.5281/zenodo.23063474",
       "relation": "requires",
       "scheme": "doi",
       "resource_type": "software"

@@ -4,6 +4,7 @@ defmodule AtpMcp.RuntimeTest do
   use ExUnit.Case, async: false
 
   import Mox
+  import AtpMcp.TestSupport
 
   alias AtpMcp.Runtime
 
@@ -97,6 +98,7 @@ defmodule AtpMcp.RuntimeTest do
 
       expect(AtpMcp.MockSotptp, :list_provers, 2, fn ->
         send(test_pid, {:mock_started, self()})
+
         receive do
           {:proceed, value} -> value
         end
@@ -216,7 +218,7 @@ defmodule AtpMcp.RuntimeTest do
         send(test_pid, {:mock_started, self()})
 
         receive do
-          :go -> {:ok, :theorem}
+          :go -> {:ok, result(:theorem)}
         end
       end)
 
@@ -257,7 +259,7 @@ defmodule AtpMcp.RuntimeTest do
         # Sleep longer than the heartbeat to give a stray emit a chance to
         # arrive.
         Process.sleep(150)
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       deliver(runtime, %{
@@ -281,5 +283,4 @@ defmodule AtpMcp.RuntimeTest do
       refute_received {:io_write, _}
     end
   end
-
 end

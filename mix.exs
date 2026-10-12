@@ -1,7 +1,7 @@
 defmodule AtpMcp.MixProject do
   use Mix.Project
 
-  @version "0.5.2"
+  @version "0.6.0"
   @source_url "https://github.com/jcschuster/AtpMcp"
 
   def project do
@@ -30,7 +30,7 @@ defmodule AtpMcp.MixProject do
 
   defp deps do
     [
-      {:atp_client, "~> 0.6"},
+      {:atp_client, "~> 0.7.1"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test},
@@ -46,7 +46,7 @@ defmodule AtpMcp.MixProject do
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/v#{@version}/CHANGELOG.md"
       },
-      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE CITATION.cff)
+      files: ~w(lib config mix.exs README.md CHANGELOG.md LICENSE CITATION.cff)
     ]
   end
 
@@ -55,7 +55,9 @@ defmodule AtpMcp.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md", "CHANGELOG.md"]
+      extras: ["README.md", "CHANGELOG.md"],
+      # Old entries name AtpClient APIs that later releases removed.
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 end

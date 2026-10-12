@@ -3,46 +3,43 @@ defmodule AtpMcp.Backends do
   Per-backend behaviours used by `AtpMcp` for dependency injection.
 
   Each behaviour exposes only the surface `AtpMcp` actually calls — enough
-  for Mox to stand in for the real `AtpClient.*` module in tests.
+  for Mox to stand in for the real `AtpClient.*` module in tests. The remote
+  lint pass needs no behaviour of its own: it is a `Tptp.Analyzer`.
   """
+
+  @type result :: {:ok, AtpClient.Result.t()} | {:error, term()}
 end
 
 defmodule AtpMcp.Backends.SystemOnTptp do
   @moduledoc false
   @callback list_provers() :: [String.t()]
-  @callback query(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  @callback query_system(String.t(), String.t(), keyword()) ::
-              {:ok, term()} | {:error, term()}
-  @callback query_selected_systems(String.t(), [String.t()], keyword()) ::
-              {:ok, [{String.t(), {:ok, term()} | {:error, term()}}]} | {:error, term()}
+  @callback query(AtpClient.Problem.t(), keyword()) :: AtpMcp.Backends.result()
+  @callback query_system(AtpClient.Problem.t(), String.t(), keyword()) ::
+              AtpMcp.Backends.result()
+  @callback query_selected_systems(AtpClient.Problem.t(), [String.t()], keyword()) ::
+              {:ok, [{String.t(), AtpMcp.Backends.result()}]} | {:error, term()}
   @callback verify(keyword()) :: :ok | {:error, term()}
   @callback label() :: String.t()
 end
 
 defmodule AtpMcp.Backends.Isabelle do
   @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  @callback prove_theory(String.t(), String.t(), keyword()) ::
-              {:ok, term()} | {:error, term()}
+  @callback query(AtpClient.Problem.t(), keyword()) :: AtpMcp.Backends.result()
+  @callback prove_theory(String.t(), String.t(), keyword()) :: AtpMcp.Backends.result()
   @callback verify(keyword()) :: :ok | {:error, term()}
   @callback label() :: String.t()
 end
 
 defmodule AtpMcp.Backends.LocalExec do
   @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  @callback query(AtpClient.Problem.t(), keyword()) :: AtpMcp.Backends.result()
   @callback verify(keyword()) :: :ok | {:error, term()}
   @callback label() :: String.t()
 end
 
 defmodule AtpMcp.Backends.StarExec do
   @moduledoc false
-  @callback query(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  @callback query(AtpClient.Problem.t(), keyword()) :: AtpMcp.Backends.result()
   @callback verify(keyword()) :: :ok | {:error, term()}
   @callback label() :: String.t()
-end
-
-defmodule AtpMcp.Backends.Lint do
-  @moduledoc false
-  @callback analyze(String.t(), keyword()) :: AtpClient.Lint.Report.t()
 end

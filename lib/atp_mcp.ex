@@ -24,10 +24,11 @@ defmodule AtpMcp do
     * `list_provers`     — `AtpClient.SystemOnTptp.list_provers/0`;
     * `run_prover`       — `AtpClient.SystemOnTptp.query_system/3`;
     * `compare_provers`  — `AtpClient.SystemOnTptp.query_selected_systems/3`;
-    * `prove_isabelle`   — `AtpClient.Isabelle.query/3` for hand-written
+    * `prove_isabelle`   — `AtpClient.Isabelle.prove_theory/4` for hand-written
       theories (the unified `query_backend` with `backend: "isabelle"`
       submits a TPTP problem instead);
-    * `lint_problem`     — `AtpClient.Lint.analyze/2`.
+    * `lint_problem`     — `Tptp.analyze/2` locally, plus
+      `AtpClient.Analyzer.Tptp4x` remotely.
 
   ## Cancellation and progress
 
@@ -54,7 +55,9 @@ defmodule AtpMcp do
   the lifetime of the MCP server. The first call pays the `HOL`
   session-start cost; subsequent calls reuse it. The session is
   configured from application env only — per-call `session` / `host`
-  / `port` / `password` overrides are no longer accepted.
+  / `port` / `password` overrides are not accepted. With no password
+  configured it starts (or reuses) a local resident server; see
+  `AtpMcp.IsabelleSession`.
 
   ## Forward note: MCP experimental Tasks primitive
 
@@ -72,7 +75,9 @@ defmodule AtpMcp do
   accepted and silently acknowledged.
   """
 
-  alias AtpClient.Lint.{Diagnostic, Report}
+  alias AtpClient.Result
+  alias Tptp.{Analysis, Diagnostic}
+  alias Tptp.Szs.Ontology
 
   @protocol_version "2025-11-25"
   @server_version Mix.Project.config()[:version]
@@ -89,28 +94,72 @@ defmodule AtpMcp do
 
   # Resolved at call time so tests can inject mocks.
   defp backends, do: Application.get_env(:atp_mcp, :backends, @default_backends)
-  defp lint, do: Application.get_env(:atp_mcp, :lint, AtpClient.Lint)
+  defp tptp4x, do: Application.get_env(:atp_mcp, :tptp4x, AtpClient.Analyzer.Tptp4x)
 
   defp sotptp, do: Map.fetch!(backends(), "sotptp")
   defp isabelle, do: Map.fetch!(backends(), "isabelle")
 
-  def main(_args \\ []) do
-    # Escripts do not start OTP applications automatically; bring up the
-    # full atp_client tree (Finch, the Provers agent, etc.).
-    {:ok, _} = Application.ensure_all_started(:atp_client)
+  # --- Command line ---
 
+  @usage """
+  Usage: atp_mcp [--config PATH]            serve MCP over stdio
+         atp_mcp doctor [BACKEND...]        check settings and reachability
+         atp_mcp --version | --help
+
+  The config file is the first of: --config PATH, $ATP_MCP_CONFIG,
+  ./atp_mcp.exs. Backends: #{Enum.join(@backend_enum, ", ")}.
+  """
+
+  def main(args \\ []) do
+    case OptionParser.parse(args, strict: [config: :string, help: :boolean, version: :boolean]) do
+      {opts, argv, []} -> command(Map.new(opts), argv)
+      {_opts, _argv, [{flag, _} | _]} -> fail("unknown option #{flag}\n\n" <> @usage)
+    end
+  end
+
+  defp command(%{help: true}, _argv), do: IO.write(@usage)
+  defp command(%{version: true}, _argv), do: IO.puts(@server_version)
+  defp command(opts, []), do: opts |> boot() |> serve()
+
+  defp command(opts, ["doctor" | names]) do
+    case AtpMcp.Doctor.run(names, backends(), boot(opts), @server_version) do
+      :ok -> :ok
+      :error -> System.halt(1)
+    end
+  end
+
+  defp command(_opts, [other | _]), do: fail("unknown command #{other}\n\n" <> @usage)
+
+  # Loads the config file and starts what every command needs. Returns the
+  # path of the config file read, if any.
+  defp boot(opts) do
+    case AtpMcp.Settings.load(opts[:config]) do
+      {:ok, config_path} ->
+        # Escripts do not start OTP applications automatically; bring up the
+        # full atp_client tree (Finch, the Provers agent, etc.).
+        {:ok, _} = Application.ensure_all_started(:atp_client)
+
+        # Long-lived Isabelle session shared across every isabelle call.
+        # Opened lazily on first use so an unreachable Isabelle server does
+        # not block the MCP server from starting or from serving the other
+        # backends. Supervised rather than linked directly to main: a crash
+        # in the session must never take the other backends' tools down
+        # with it.
+        {:ok, _} =
+          Supervisor.start_link([AtpMcp.IsabelleSession],
+            strategy: :one_for_one,
+            name: AtpMcp.Supervisor
+          )
+
+        config_path
+
+      {:error, message} ->
+        fail(message)
+    end
+  end
+
+  defp serve(_config_path) do
     :ok = :io.setopts(:standard_io, encoding: :latin1)
-
-    # Long-lived Isabelle session shared across every isabelle call.
-    # Opened lazily on first use so an unreachable Isabelle server does
-    # not block the MCP server from starting or from serving the other
-    # backends. Supervised rather than linked directly to main: a crash in
-    # the session must never take the other backends' tools down with it.
-    {:ok, _} =
-      Supervisor.start_link([AtpMcp.IsabelleSession],
-        strategy: :one_for_one,
-        name: AtpMcp.Supervisor
-      )
 
     {:ok, _pid} =
       AtpMcp.Runtime.start_link(heartbeat_ms: Application.get_env(:atp_mcp, :heartbeat_ms, 5_000))
@@ -120,6 +169,13 @@ defmodule AtpMcp do
     |> Enum.each(&AtpMcp.Runtime.deliver/1)
 
     AtpMcp.Runtime.await_idle()
+  end
+
+  # stderr, so that an MCP host shows the message in its server log.
+  @spec fail(String.t()) :: no_return()
+  defp fail(message) do
+    IO.puts(:stderr, "atp_mcp: #{message}")
+    System.halt(2)
   end
 
   # --- JSON-RPC framing ---
@@ -267,11 +323,12 @@ defmodule AtpMcp do
     end
   end
 
-  defp call_tool("verify_backend", _args), do: {:error, "Error: verify_backend requires 'backend'"}
+  defp call_tool("verify_backend", _args),
+    do: {:error, "Error: verify_backend requires 'backend'"}
 
   defp call_tool("query_backend", %{"backend" => name, "problem" => problem} = args) do
     case resolve_backend(name) do
-      {:ok, module} -> render(module.query(problem, opts_from(args, name)))
+      {:ok, module} -> render(module.query(problem, opts_from(args, name)), args)
       {:error, message} -> {:error, "Error: #{message}"}
     end
   end
@@ -288,8 +345,7 @@ defmodule AtpMcp do
   end
 
   defp call_tool("run_prover", %{"problem" => problem, "system_id" => system_id} = args) do
-    opts = [raw: Map.get(args, "raw", false)] ++ time_limit_opt(args)
-    render(sotptp().query_system(problem, system_id, opts))
+    render(sotptp().query_system(problem, system_id, time_limit_opt(args)), args)
   end
 
   defp call_tool("run_prover", _args) do
@@ -300,7 +356,7 @@ defmodule AtpMcp do
        when is_list(system_ids) do
     case sotptp().query_selected_systems(problem, system_ids, time_limit_opt(args)) do
       {:ok, results} -> {:ok, format_compare_report(results, system_ids)}
-      {:error, reason} -> {:error, "Error: #{inspect(reason)}"}
+      {:error, reason} -> {:error, "Error: #{describe_failure(reason)}"}
     end
   end
 
@@ -309,7 +365,7 @@ defmodule AtpMcp do
   end
 
   defp call_tool("prove_isabelle", %{"theory" => theory, "theory_name" => name} = args) do
-    render(isabelle().prove_theory(theory, name, opts_from(args, "isabelle")))
+    render(isabelle().prove_theory(theory, name, opts_from(args, "isabelle")), args)
   end
 
   defp call_tool("prove_isabelle", _args) do
@@ -317,7 +373,8 @@ defmodule AtpMcp do
   end
 
   defp call_tool("lint_problem", %{"problem" => problem} = args) do
-    {:ok, problem |> lint().analyze(lint_opts(args)) |> format_lint_report()}
+    analysis = problem |> Tptp.analyze() |> Analysis.with_line_index()
+    {:ok, format_lint_report(analysis, lint_findings(analysis, lint_backends(args)))}
   end
 
   defp call_tool("lint_problem", _args) do
@@ -342,16 +399,18 @@ defmodule AtpMcp do
   defp resolve_backend(_), do: {:error, "backend must be a string"}
 
   # Strip MCP-protocol keys before forwarding the remainder as a keyword list
-  # of per-call backend overrides. Each backend reads what it understands.
-  defp opts_from(args, "sotptp"), do: opts_from_filtered(args, [:time_limit_sec, :raw, :url])
+  # of per-call backend overrides. Each backend validates its options and
+  # raises on unknown keys, so only the ones it understands are forwarded.
+  # `raw` is not among them: it selects how AtpMcp renders the result.
+  defp opts_from(args, "sotptp"), do: opts_from_filtered(args, [:time_limit_sec, :url])
 
   defp opts_from(args, "isabelle") do
-    filtered = opts_from_filtered(args, [:use_theories_timeout_ms, :raw])
+    filtered = opts_from_filtered(args, [:use_theories_timeout_ms])
     rename_key(filtered, :timeout_ms, :use_theories_timeout_ms, args)
   end
 
   defp opts_from(args, "local_exec"),
-    do: opts_from_filtered(args, [:binary, :args, :cpu_timeout_s, :wall_timeout_ms, :raw])
+    do: opts_from_filtered(args, [:binary, :args, :cpu_timeout_s, :wall_timeout_ms])
 
   defp opts_from(args, "starexec"),
     do:
@@ -361,11 +420,10 @@ defmodule AtpMcp do
         :password,
         :request_timeout_ms,
         :poll_interval_ms,
-        :timeout_ms,
-        :raw
+        :timeout_ms
       ])
 
-  defp opts_from(args, _), do: opts_from_filtered(args, [:time_limit_sec, :raw])
+  defp opts_from(args, _), do: opts_from_filtered(args, [:time_limit_sec])
 
   defp opts_from_filtered(args, allowed) do
     args
@@ -392,178 +450,179 @@ defmodule AtpMcp do
   defp time_limit_opt(%{"time_limit_sec" => t}) when is_integer(t), do: [time_limit_sec: t]
   defp time_limit_opt(_), do: []
 
-  defp lint_opts(%{"backends" => backends}) when is_list(backends) do
-    case Enum.flat_map(backends, &parse_lint_backend/1) do
-      [] -> []
-      list -> [backends: list]
+  @lint_backends [:local, :tptp4x]
+
+  defp lint_backends(%{"backends" => names}) when is_list(names) do
+    case Enum.flat_map(names, &parse_lint_backend/1) do
+      [] -> @lint_backends
+      backends -> backends
     end
   end
 
-  defp lint_opts(_), do: []
+  defp lint_backends(_), do: @lint_backends
 
   defp parse_lint_backend("local"), do: [:local]
   defp parse_lint_backend("tptp4x"), do: [:tptp4x]
   defp parse_lint_backend(_), do: []
 
-  # --- Result formatting ---
+  # --- Lint passes ---
 
-  defp render({:ok, result}), do: {:ok, format_result(result)}
-  defp render({:error, reason}), do: {:error, "Error: #{inspect(reason)}"}
+  # Each pass yields rendered report lines, so a pass that did not run can
+  # say so instead of passing for a clean bill of health.
+  defp lint_findings(analysis, backends), do: Enum.flat_map(backends, &lint_pass(&1, analysis))
 
-  # SystemOnTPTP drops system ids it does not recognise ("WARNING: … does not
-  # exist - ignored") and returns no output block for them, so a requested
-  # prover can be missing from `results` entirely. Reporting the gap keeps the
-  # comparison honest: asking for N provers should never quietly answer for
-  # fewer.
-  defp format_compare_report(results, requested) do
-    returned = MapSet.new(results, fn {system, _} -> to_string(system) end)
+  defp lint_pass(:local, analysis), do: format_diagnostics(analysis, "tptp", analysis.diagnostics)
 
-    missing =
-      requested
-      |> Enum.map(&to_string/1)
-      |> Enum.reject(&MapSet.member?(returned, &1))
-      |> Enum.map(&"#{&1}: no result returned (unknown or unavailable system)")
-
-    Enum.map_join(Enum.map(results, &format_compare_row/1) ++ missing, "\n", & &1)
+  # TPTP4X's view of a file that does not parse only adds noise on top of the
+  # local error that has to be fixed first.
+  defp lint_pass(:tptp4x, analysis) do
+    if Diagnostic.any_errors?(analysis.diagnostics) do
+      ["tptp4x skipped: the local pass found errors"]
+    else
+      analysis
+      |> Tptp.Analyzer.run_all([tptp4x()])
+      |> Enum.flat_map(fn {id, outcome} -> format_outcome(analysis, id, outcome) end)
+    end
   end
 
-  defp format_compare_row({system, {:ok, status}}), do: "#{system}: #{format_result(status)}"
-  defp format_compare_row({system, {:error, reason}}), do: "#{system}: error(#{inspect(reason)})"
+  defp format_outcome(_analysis, _id, :skipped), do: []
 
-  # SZS-faithful rendering: AtpClient's ResultNormalization already normalises
-  # every backend's verdict to the snake_case form of an SZS Ontology status
-  # (`:theorem`, `:counter_satisfiable`, `:resource_out`, …). Converting back
-  # via `Macro.camelize/1` prints the canonical SZS name (`Theorem`,
-  # `CounterSatisfiable`, `ResourceOut`, …), so unknown-but-well-formed SZS
-  # additions pass through without a code change. See
-  # https://tptp.org/UserDocs/SZSOntology/ for the full ontology.
-  defp format_result(status) when is_atom(status),
-    do: status |> Atom.to_string() |> Macro.camelize()
+  defp format_outcome(analysis, id, diagnostics),
+    do: format_diagnostics(analysis, Atom.to_string(id), diagnostics)
 
-  defp format_result(text) when is_binary(text), do: text
-  defp format_result(map) when is_map(map), do: inspect(map, pretty: true, limit: :infinity)
-  defp format_result(other), do: inspect(other)
+  # --- Result formatting ---
 
-  defp format_lint_report(%Report{diagnostics: [], symbols: []}), do: "OK (no diagnostics)"
+  defp render({:ok, %Result{} = result}, args),
+    do: {:ok, format_result(result, Map.get(args, "raw", false))}
 
-  defp format_lint_report(%Report{diagnostics: diags, symbols: syms}) do
-    [diagnostics_section(diags), symbols_section(syms)]
+  defp render({:error, {:unknown_system, name} = reason}, _args),
+    do: {:error, "Error: #{name} is #{describe_failure(reason)}"}
+
+  defp render({:error, reason}, _args), do: {:error, "Error: #{describe_failure(reason)}"}
+
+  # AtpClient answers one entry per requested system, in the order requested,
+  # but keys a result by the identifier that ran ("Vampire---5.0.1") and a
+  # failure by the name given. Each row is labelled with what the caller
+  # asked for, so "Vampire" finds its row, and names the version that ran
+  # when the request was a bare name.
+  defp format_compare_report(results, requested) do
+    requested
+    |> Enum.zip(results)
+    |> Enum.map_join("\n", &format_compare_row/1)
+  end
+
+  defp format_compare_row({requested, {ran, {:ok, result}}}),
+    do: "#{compare_label(requested, ran)}: #{format_result(result, false)}"
+
+  defp format_compare_row({requested, {_key, {:error, reason}}}),
+    do: "#{requested}: #{describe_failure(reason)}"
+
+  defp compare_label(requested, requested), do: requested
+  defp compare_label(requested, ran), do: "#{requested} (#{ran})"
+
+  # The failures a caller can act on, in words; anything else as AtpClient
+  # reported it.
+  defp describe_failure({:unknown_system, _name}),
+    do: "not a system on SystemOnTPTP (see list_provers)"
+
+  defp describe_failure(:no_output), do: "SystemOnTPTP returned no output for this system"
+  defp describe_failure(reason), do: inspect(reason)
+
+  # A result's status is always a `Tptp.Szs.Ontology` value — AtpClient
+  # reports a status word outside the ontology as an error — so its
+  # canonical SZS name (`Theorem`, `CounterSatisfiable`, …) is the verdict.
+  # `raw` asks for what the system printed instead.
+  defp format_result(%Result{output: output}, true), do: output
+  defp format_result(%Result{status: status}, _raw), do: Ontology.name(status)
+
+  defp format_lint_report(analysis, lines) do
+    [diagnostics_section(lines), symbols_section(declared_symbols(analysis), analysis)]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n\n")
   end
 
   defp diagnostics_section([]), do: "OK (no diagnostics)"
-  defp diagnostics_section(diags), do: Enum.map_join(diags, "\n", &format_diagnostic/1)
+  defp diagnostics_section(lines), do: Enum.join(lines, "\n")
 
-  defp symbols_section([]), do: ""
+  defp symbols_section([], _analysis), do: ""
 
-  defp symbols_section(symbols) do
-    "Symbols:\n" <> Enum.map_join(symbols, "\n", &format_symbol/1)
+  defp symbols_section(symbols, analysis) do
+    "Symbols:\n" <> Enum.map_join(symbols, "\n", &format_symbol(&1, analysis))
   end
 
-  defp format_diagnostic(%Diagnostic{
-         line: line,
-         column: column,
-         severity: severity,
-         message: message,
-         source: source
-       }) do
-    source_tag = if source, do: " (#{source})", else: ""
-    "#{line}:#{column} [#{severity}]#{source_tag} #{message}"
+  # Only declared symbols carry a type worth reporting; FOF and CNF symbols
+  # are used without declaration and would only restate the input.
+  defp declared_symbols(analysis) do
+    analysis.table.symbols
+    |> Map.values()
+    |> Enum.filter(&(&1.declared_as && &1.declared_at))
+    |> Enum.sort_by(& &1.declared_at.offset)
   end
 
-  defp format_symbol(sym) do
-    type = if sym.type, do: " : #{sym.type}", else: ""
-    "  #{sym.name}#{type} (#{sym.kind} at #{sym.line}:#{sym.column})"
+  defp format_diagnostics(analysis, source, diagnostics),
+    do: Enum.map(diagnostics, &format_diagnostic(&1, source, analysis))
+
+  defp format_diagnostic(%Diagnostic{} = diagnostic, source, analysis) do
+    {line, column} = Analysis.line_column(analysis, diagnostic.span.offset)
+
+    "#{line}:#{column} [#{diagnostic.severity}] (#{source}) " <>
+      "#{diagnostic.message} [#{diagnostic.code}]" <> format_hint(diagnostic.hint)
+  end
+
+  defp format_hint(nil), do: ""
+  defp format_hint(hint), do: "\n    hint: #{hint}"
+
+  defp format_symbol(symbol, analysis) do
+    {line, column} = Analysis.line_column(analysis, symbol.declared_at.offset)
+    type = Tptp.Printer.Canonical.to_string(symbol.declared_as)
+    "  #{symbol.name} : #{type} (declared at #{line}:#{column})"
   end
 
   # --- SZS ontology reference ---
 
-  # Compiled once at module load. Kept inline so the escript is
-  # self-contained — an agent that only has stdio access to the server can
-  # still look up what "CounterSatisfiable" or "ResourceOut" means without
-  # a network round-trip to tptp.org.
+  # Generated once at compile time from `Tptp.Szs.Ontology`, the same table
+  # AtpClient reads verdicts against, so the reference cannot drift from the
+  # statuses the tools report. Kept in the escript so an agent with only
+  # stdio access can look up what "CounterSatisfiable" or "ResourceOut" means
+  # without a round-trip to tptp.org. The Data ontology is left out: it names
+  # output blocks, not verdicts.
+  szs_entries = fn ontology ->
+    for value <- Ontology.values(), Ontology.ontology(value) == ontology, into: "" do
+      "  #{Ontology.name(value)} (#{Ontology.mnemonic(value)})\n" <>
+        "      #{Ontology.describe(value)}\n"
+    end
+  end
+
   @szs_ontology_text """
   SZS Ontology — TPTP status verdicts
   ===================================
 
-  Every backend result surfaces one status atom from Geoff Sutcliffe's SZS
-  Ontology (https://tptp.org/UserDocs/SZSOntology/). Statuses split into two
-  top-level categories: Success (the prover produced a verdict about the
-  input) and NoSuccess (it did not). Within Success, verdicts differ in
-  what exactly the prover established — a Theorem (the conjecture follows
-  from the axioms) is not the same as Unsatisfiable (the clause set has no
-  model), even though a refutational prover reaches both through the same
-  saturation.
+  Every backend result reports one status from Geoff Sutcliffe's SZS
+  Ontology (#{Tptp.Szs.Page.source()}). Statuses split into Success (the
+  prover established something about the input) and NoSuccess (it did not).
+  Within Success, verdicts differ in what was established — a Theorem (the
+  conjecture follows from the axioms) is not the same as Unsatisfiable (the
+  clause set has no model), even though a refutational prover reaches both
+  through the same saturation. Below, Ax are the axioms and C the conjecture.
 
-  Success — the prover produced a verdict about the input
-  -------------------------------------------------------
+  Success
+  -------
 
-    Theorem                    Conjecture is a logical consequence of the
-                               axioms. What a Sledgehammer-style
-                               conjecture-directed prover reports on
-                               success.
-    Unsatisfiable              Clause set (typically negated conjecture +
-                               axioms) has no model. Reported by
-                               refutational provers on CNF input.
-    ContradictoryAxioms        Axioms alone are already inconsistent; the
-                               conjecture is a vacuous consequence.
-    Satisfiable                A model of the input was found. On a
-                               negated-conjecture pipeline this is a
-                               counter-model to the original goal.
-    CounterSatisfiable         The negation of the conjecture is
-                               satisfiable — i.e. the conjecture does not
-                               follow from the axioms.
-    Equivalent                 Two formulae proven logically equivalent.
-    EquiSatisfiable            Two formulae proven equi-satisfiable
-                               (equisat, not full equivalence).
-    Tautology                  A single formula proven valid.
-    TautologousConclusion      The conclusion alone is tautological.
-    WeakerConclusion           Axioms entail something strictly stronger
-                               than the stated conclusion.
-    CounterTheorem             Negation of the conjecture is a theorem.
-    CounterEquivalent          The two formulae are provably not
-                               equivalent.
-    EquivalentCounterTheorem   Negation of the conjecture is equivalent
-                               to another supplied formula.
-    NoConsequence              Proven that the conjecture does not follow
-                               and its negation does not follow either
-                               (independence result).
+  #{szs_entries.(:success)}
+  NoSuccess
+  ---------
 
-  NoSuccess — the prover did not produce a verdict
-  ------------------------------------------------
-
-    GaveUp                     Prover concluded without a decision.
-    Unknown                    Verdict genuinely unknown to the prover.
-    Incomplete                 Prover ran to completion but its calculus is
-                               known to be incomplete for the input class.
-    Timeout                    Wall-clock or CPU time limit hit.
-    ResourceOut                Non-time resource limit (memory, term
-                               depth, clause count, …) hit.
-    MemoryOut                  Memory limit hit specifically.
-    Forced                     Prover killed externally (SIGINT/SIGKILL,
-                               remote cancel).
-    User                       User asked the prover to stop.
-    Inappropriate              Input is outside the prover's supported
-                               fragment (e.g. THF sent to a FOF-only
-                               prover).
-    Error                      Prover internal error.
-    InputError                 Prover rejected the input as malformed.
-
-  How AtpMcp renders statuses
-  ---------------------------
-
-  Backends produce statuses via `AtpClient.ResultNormalization`. AtpMcp
-  prints the SZS name verbatim (`Theorem`, `CounterSatisfiable`, `GaveUp`,
-  `ResourceOut`, …). Any SZS name that is not in the explicit table above
-  is permissively passed through in its snake-case → CamelCase form, so
-  future SZS additions like `EquivalentTheorem` render correctly without a
-  code change.
+  #{szs_entries.(:no_success)}\
   """
 
   defp szs_ontology_text, do: @szs_ontology_text
 
   # --- MCP tool schemas ---
+
+  @raw_description "Return the system's verbatim output instead of the SZS verdict"
+
+  @system_id_description "Prover ID from list_provers (\"Vampire---5.0.1\"), or a bare " <>
+                           "system name (\"Vampire\") for the latest version offered"
 
   defp tool_schemas do
     [
@@ -629,7 +688,7 @@ defmodule AtpMcp do
               type: "integer",
               description: "Time limit for backends that honour it (sotptp)"
             },
-            raw: %{type: "boolean", description: "Return raw backend output where supported"}
+            raw: %{type: "boolean", description: @raw_description}
           },
           required: ["backend", "problem"],
           additionalProperties: true
@@ -652,9 +711,9 @@ defmodule AtpMcp do
           type: "object",
           properties: %{
             problem: %{type: "string", description: "TPTP problem text"},
-            system_id: %{type: "string", description: "Prover ID from list_provers"},
+            system_id: %{type: "string", description: @system_id_description},
             time_limit_sec: %{type: "integer", description: "Time limit in seconds"},
-            raw: %{type: "boolean", description: "Return raw prover output"}
+            raw: %{type: "boolean", description: @raw_description}
           },
           required: ["problem", "system_id"]
         }
@@ -674,7 +733,7 @@ defmodule AtpMcp do
             system_ids: %{
               type: "array",
               items: %{type: "string"},
-              description: "List of prover IDs to compare"
+              description: "Prover IDs or bare system names to compare"
             },
             time_limit_sec: %{type: "integer", description: "Time limit per prover in seconds"}
           },
@@ -691,7 +750,7 @@ defmodule AtpMcp do
         host, port, and credentials all come from application config — they
         are fixed for the lifetime of the server and cannot be overridden
         per call). For TPTP/THF problems use `query_backend` with
-        `backend: "isabelle"` instead — that routes through `query_tptp` on
+        `backend: "isabelle"` instead — that routes through `prove_tptp` on
         the same shared session.
         """,
         inputSchema: %{
@@ -706,7 +765,7 @@ defmodule AtpMcp do
               type: "integer",
               description: "Overall use_theories timeout in milliseconds"
             },
-            raw: %{type: "boolean", description: "Return raw use_theories payload"}
+            raw: %{type: "boolean", description: @raw_description}
           },
           required: ["theory", "theory_name"]
         }

@@ -1,0 +1,32 @@
+FROM docker.io/library/elixir:1.20-otp-29
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git jq less unzip zsh sudo procps \
+        ripgrep fd-find fzf gh inotify-tools \
+        libfontconfig1 libgomp1 pwgen rlwrap perl \
+    && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV COLORTERM=truecolor \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ELIXIR_ERL_OPTIONS="+fnu" \
+    ERL_AFLAGS="+fnu"
+
+RUN useradd -m -s /bin/zsh node \
+    && echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node
+
+USER node
+WORKDIR /workspace
+
+ENV MIX_HOME=/home/node/.mix \
+    HEX_HOME=/home/node/.hex \
+    SHELL=/bin/zsh \
+    TPTP=/opt/TPTP \
+    TPTP_ROOT=/opt/TPTP \
+    PATH="/home/node/.local/bin:/home/node/.mix/escripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && mix local.hex --force \
+    && mix local.rebar --force \
+    && claude --version

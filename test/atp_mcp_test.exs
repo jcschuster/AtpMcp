@@ -2,7 +2,7 @@ defmodule AtpMcpTest do
   use ExUnit.Case, async: true
   import Mox
 
-  alias AtpClient.Lint.{Diagnostic, Report, Symbol}
+  import AtpMcp.TestSupport
 
   @problem "fof(ax,axiom,p). fof(conj,conjecture,p)."
 
@@ -231,7 +231,7 @@ defmodule AtpMcpTest do
     test "dispatches to the named backend's query/2" do
       expect(AtpMcp.MockLocalExec, :query, fn problem, _opts ->
         assert problem == @problem
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       result =
@@ -243,7 +243,7 @@ defmodule AtpMcpTest do
     test "forwards backend-appropriate options (sotptp time_limit_sec)" do
       expect(AtpMcp.MockSotptp, :query, fn _problem, opts ->
         assert opts[:time_limit_sec] == 15
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       tool_call(96, "query_backend", %{
@@ -256,7 +256,7 @@ defmodule AtpMcpTest do
     test "renames timeout_ms → use_theories_timeout_ms for isabelle" do
       expect(AtpMcp.MockIsabelle, :query, fn _problem, opts ->
         assert opts[:use_theories_timeout_ms] == 20_000
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       tool_call(97, "query_backend", %{
@@ -315,10 +315,9 @@ defmodule AtpMcpTest do
   # ---------------------------------------------------------------------------
 
   describe "run_prover — result formatting" do
-    # Statuses come from `AtpClient.ResultNormalization` as the snake_case
-    # form of an SZS Ontology verdict; AtpMcp renders the CamelCase SZS
-    # name verbatim. Covers a representative slice of both Success and
-    # NoSuccess.
+    # A result's status is a `Tptp.Szs.Ontology` value; AtpMcp renders its
+    # canonical SZS name. Covers a representative slice of both Success and
+    # NoSuccess, including names that are not a plain camelization.
     for {atom, label} <- [
           theorem: "Theorem",
           unsatisfiable: "Unsatisfiable",
@@ -334,21 +333,28 @@ defmodule AtpMcpTest do
           memory_out: "MemoryOut",
           forced: "Forced",
           inappropriate: "Inappropriate",
-          input_error: "InputError"
+          input_error: "InputError",
+          equivalent_theorem: "EquivalentTheorem",
+          os_error: "OSError",
+          cpu_timeout: "CPUTimeout",
+          wc_timeout: "WCTimeout"
         ] do
       test "#{inspect(atom)} formats as #{inspect(label)}" do
         atom = unquote(atom)
         label = unquote(label)
-        expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, atom} end)
+        expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, result(atom)} end)
 
         result = tool_call(20, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
         assert text_of(result) == label
       end
     end
 
-    test "raw string passthrough (raw: true)" do
+    test "raw: true returns the system's verbatim output" do
       raw_output = "% SZS status Theorem\n% CPU 0.01s"
-      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, raw_output} end)
+
+      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ ->
+        {:ok, result(:theorem, raw_output)}
+      end)
 
       result =
         tool_call(27, "run_prover", %{
@@ -359,21 +365,13 @@ defmodule AtpMcpTest do
 
       assert text_of(result) == raw_output
     end
-
-    test "unknown SZS name passes through as CamelCase" do
-      # Mirrors AtpClient's permissive pass-through for SZS names outside
-      # the explicit table (e.g. `EquivalentTheorem` → `:equivalent_theorem`).
-      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ -> {:ok, :equivalent_theorem} end)
-      result = tool_call(28, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
-      assert text_of(result) == "EquivalentTheorem"
-    end
   end
 
   describe "run_prover — option forwarding" do
     test "passes time_limit_sec through to query_system" do
       expect(AtpMcp.MockSotptp, :query_system, fn _, _, opts ->
         assert opts[:time_limit_sec] == 30
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       tool_call(30, "run_prover", %{
@@ -383,10 +381,10 @@ defmodule AtpMcpTest do
       })
     end
 
-    test "passes raw: true through to query_system" do
+    test "does not forward raw (AtpClient rejects unknown options)" do
       expect(AtpMcp.MockSotptp, :query_system, fn _, _, opts ->
-        assert opts[:raw] == true
-        {:ok, "raw output"}
+        refute Keyword.has_key?(opts, :raw)
+        {:ok, result(:theorem, "raw output")}
       end)
 
       tool_call(31, "run_prover", %{
@@ -399,7 +397,7 @@ defmodule AtpMcpTest do
     test "omits time_limit_sec when not provided" do
       expect(AtpMcp.MockSotptp, :query_system, fn _, _, opts ->
         refute Keyword.has_key?(opts, :time_limit_sec)
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       tool_call(32, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
@@ -414,6 +412,17 @@ defmodule AtpMcpTest do
 
       result = tool_call(40, "run_prover", %{"problem" => @problem, "system_id" => "E---2.0"})
       assert String.starts_with?(text_of(result), "Error:")
+    end
+
+    test "an unknown system is described in words" do
+      expect(AtpMcp.MockSotptp, :query_system, fn _, _, _ ->
+        {:error, {:unknown_system, "Nope"}}
+      end)
+
+      result = tool_call(44, "run_prover", %{"problem" => @problem, "system_id" => "Nope"})
+
+      assert text_of(result) ==
+               "Error: Nope is not a system on SystemOnTPTP (see list_provers)"
     end
 
     test "missing system_id returns a descriptive error" do
@@ -447,9 +456,9 @@ defmodule AtpMcpTest do
       expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, _, _ ->
         {:ok,
          [
-           {"E---2.0", {:ok, :theorem}},
-           {"Vampire---4.5", {:ok, :counter_satisfiable}},
-           {"Z3---4.12", {:ok, :timeout}}
+           {"E---2.0", {:ok, result(:theorem)}},
+           {"Vampire---4.5", {:ok, result(:counter_satisfiable)}},
+           {"Z3---4.12", {:ok, result(:timeout)}}
          ]}
       end)
 
@@ -463,24 +472,49 @@ defmodule AtpMcpTest do
                "E---2.0: Theorem\nVampire---4.5: CounterSatisfiable\nZ3---4.12: Timeout"
     end
 
-    test "formats an error result from one prover" do
-      expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, _, _ ->
+    test "labels each row with the name requested, and the version a bare name ran" do
+      expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, ["Vampire", "E---3.5.1"], _ ->
         {:ok,
          [
-           {"E---2.0", {:ok, :theorem}},
-           {"Broken---1.0", {:error, :malformed_input}}
+           {"Vampire---5.0.1", {:ok, result(:counter_satisfiable)}},
+           {"E---3.5.1", {:ok, result(:counter_satisfiable)}}
          ]}
       end)
 
       result =
         tool_call(51, "compare_provers", %{
           "problem" => @problem,
-          "system_ids" => ["E---2.0", "Broken---1.0"]
+          "system_ids" => ["Vampire", "E---3.5.1"]
         })
 
-      text = text_of(result)
-      assert String.contains?(text, "E---2.0: Theorem")
-      assert String.contains?(text, "Broken---1.0: error(")
+      assert text_of(result) ==
+               "Vampire (Vampire---5.0.1): CounterSatisfiable\nE---3.5.1: CounterSatisfiable"
+    end
+
+    test "describes per-system failures in words" do
+      expect(AtpMcp.MockSotptp, :query_selected_systems, fn _, _, _ ->
+        {:ok,
+         [
+           {"E---2.0", {:ok, result(:theorem)}},
+           {"Nope", {:error, {:unknown_system, "Nope"}}},
+           {"Quiet---1.0", {:error, :no_output}},
+           {"Broken---1.0", {:error, :malformed_input}}
+         ]}
+      end)
+
+      result =
+        tool_call(55, "compare_provers", %{
+          "problem" => @problem,
+          "system_ids" => ["E---2.0", "Nope", "Quiet---1.0", "Broken---1.0"]
+        })
+
+      assert text_of(result) ==
+               """
+               E---2.0: Theorem
+               Nope: not a system on SystemOnTPTP (see list_provers)
+               Quiet---1.0: SystemOnTPTP returned no output for this system
+               Broken---1.0: :malformed_input\
+               """
     end
 
     test "empty result list produces empty string" do
@@ -550,7 +584,7 @@ defmodule AtpMcpTest do
   describe "prove_isabelle" do
     test "formats a normalized result" do
       expect(AtpMcp.MockIsabelle, :prove_theory, fn _theory, _name, _opts ->
-        {:ok, :theorem}
+        {:ok, result(:theorem)}
       end)
 
       result =
@@ -559,18 +593,18 @@ defmodule AtpMcpTest do
       assert text_of(result) == "Theorem"
     end
 
-    test "forwards timeout_ms (renamed) and raw options; drops host/port/session" do
+    test "forwards timeout_ms (renamed); renders raw output; drops host/port/session" do
       expect(AtpMcp.MockIsabelle, :prove_theory, fn theory, name, opts ->
         assert theory == @theory
         assert name == "Example"
         assert opts[:use_theories_timeout_ms] == 30_000
-        assert opts[:raw] == true
+        refute Keyword.has_key?(opts, :raw)
         # Per-call connection overrides are no longer forwarded — the
         # shared session is opened from application config only.
         refute Keyword.has_key?(opts, :session)
         refute Keyword.has_key?(opts, :host)
         refute Keyword.has_key?(opts, :port)
-        {:ok, %{"ok" => true, "errors" => [], "nodes" => []}}
+        {:ok, result(:theorem, "theory Example: ok, no errors")}
       end)
 
       result =
@@ -612,84 +646,90 @@ defmodule AtpMcpTest do
   # ---------------------------------------------------------------------------
 
   describe "lint_problem" do
-    test "reports a clean problem as OK" do
-      expect(AtpMcp.MockLint, :analyze, fn _, _ ->
-        %Report{diagnostics: [], symbols: []}
-      end)
+    # The local pass is the real `Tptp.analyze/2`; only the remote TPTP4X
+    # analyzer is mocked. An unexpected `analyze/2` call would be caught by
+    # `Tptp.Analyzer.run_all/3` and surface as a TPTP0800 finding, so the
+    # default stub answers `[]` and the tests that care say so with `expect`.
+    setup do
+      stub(AtpMcp.MockTptp4x, :id, fn -> :tptp4x end)
+      stub(AtpMcp.MockTptp4x, :dialects, fn -> :any end)
+      stub(AtpMcp.MockTptp4x, :analyze, fn _, _ -> [] end)
+      :ok
+    end
 
+    test "reports a clean problem as OK" do
       result = tool_call(80, "lint_problem", %{"problem" => "fof(a, axiom, p)."})
       assert text_of(result) == "OK (no diagnostics)"
     end
 
-    test "formats diagnostics with severity, source, and position" do
-      expect(AtpMcp.MockLint, :analyze, fn _, _ ->
-        %Report{
-          diagnostics: [
-            %Diagnostic{
-              line: 1,
-              column: 7,
-              severity: :error,
-              message: "unknown TPTP role `axim`",
-              source: "local"
-            },
-            %Diagnostic{
-              line: 3,
-              column: 1,
-              severity: :warning,
-              message: "missing terminator",
-              source: "tptp4x"
-            }
-          ],
-          symbols: []
-        }
-      end)
-
+    test "formats local diagnostics with position, severity, source, code, and hint" do
       result = tool_call(81, "lint_problem", %{"problem" => "fof(a, axim, p)."})
       text = text_of(result)
-      assert text =~ "1:7 [error] (local) unknown TPTP role `axim`"
-      assert text =~ "3:1 [warning] (tptp4x) missing terminator"
+      assert text =~ ~s|1:8 [warning] (tptp) "axim" is not a TPTP formula role [TPTP0401]|
+      assert text =~ "    hint: expected one of axiom"
     end
 
-    test "appends symbols when present" do
-      expect(AtpMcp.MockLint, :analyze, fn _, _ ->
-        %Report{
-          diagnostics: [],
-          symbols: [%Symbol{name: "plus", kind: :type_decl, type: "$i > $i", line: 2, column: 5}]
-        }
+    test "appends the remote analyzer's findings, tagged with its id" do
+      expect(AtpMcp.MockTptp4x, :analyze, fn %Tptp.Analysis{}, _opts ->
+        [Tptp.Diagnostic.new("TPTP4X", :warning, Tptp.Span.new(0, 18, 1), "missing terminator")]
       end)
 
-      result = tool_call(82, "lint_problem", %{"problem" => "tff(a, type, plus: $i > $i)."})
+      problem = "fof(a, axiom, p).\nfof(b, axiom, q)."
+      result = tool_call(82, "lint_problem", %{"problem" => problem})
+      assert text_of(result) =~ "2:1 [warning] (tptp4x) missing terminator [TPTP4X]"
+    end
+
+    test "skips the remote pass when the local pass found errors" do
+      expect(AtpMcp.MockTptp4x, :analyze, 0, fn _, _ -> [] end)
+
+      result = tool_call(83, "lint_problem", %{"problem" => "fof(a, axiom, p"})
+      text = text_of(result)
+      assert text =~ "[error] (tptp)"
+      assert text =~ "tptp4x skipped"
+    end
+
+    test "appends declared symbols with their types" do
+      result = tool_call(84, "lint_problem", %{"problem" => "tff(a, type, plus: $i > $i)."})
       text = text_of(result)
       assert text =~ "Symbols:"
-      assert text =~ "plus : $i > $i (type_decl at 2:5)"
+      assert text =~ "plus : $i > $i (declared at 1:14)"
     end
 
-    test "forwards a parsed backends list" do
-      expect(AtpMcp.MockLint, :analyze, fn _, opts ->
-        assert opts[:backends] == [:local]
-        %Report{diagnostics: [], symbols: []}
-      end)
+    test "backends: [\"local\"] runs only the local pass" do
+      expect(AtpMcp.MockTptp4x, :analyze, 0, fn _, _ -> [] end)
 
-      tool_call(83, "lint_problem", %{
-        "problem" => "fof(a, axiom, p).",
-        "backends" => ["local"]
-      })
+      result =
+        tool_call(85, "lint_problem", %{
+          "problem" => "fof(a, axiom, p).",
+          "backends" => ["local"]
+        })
+
+      assert text_of(result) == "OK (no diagnostics)"
     end
 
-    test "ignores unknown backend names" do
-      expect(AtpMcp.MockLint, :analyze, fn _, opts ->
-        refute Keyword.has_key?(opts, :backends)
-        %Report{diagnostics: [], symbols: []}
-      end)
+    test "backends: [\"tptp4x\"] hides the local findings" do
+      expect(AtpMcp.MockTptp4x, :analyze, fn _, _ -> [] end)
 
-      tool_call(84, "lint_problem", %{
+      result =
+        tool_call(86, "lint_problem", %{
+          "problem" => "fof(a, axim, p).",
+          "backends" => ["tptp4x"]
+        })
+
+      assert text_of(result) == "OK (no diagnostics)"
+    end
+
+    test "unknown backend names fall back to both passes" do
+      expect(AtpMcp.MockTptp4x, :analyze, fn _, _ -> [] end)
+
+      tool_call(87, "lint_problem", %{
         "problem" => "fof(a, axiom, p).",
         "backends" => ["nonsense"]
       })
     end
 
     test "missing problem returns a descriptive error" do
-      result = tool_call(85, "lint_problem", %{})
+      result = tool_call(88, "lint_problem", %{})
       assert String.contains?(text_of(result), "Error:")
     end
   end
