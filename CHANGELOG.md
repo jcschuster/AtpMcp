@@ -5,7 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-10-15
+
+AtpMcp now runs on AtpClient 0.8 and `tptp` 0.2.
+
+### Upgrading
+
+- `list_provers` lists only the systems that can prove: tools on
+  SystemOnTPTP (model checkers, converters, viewers) no longer appear.
+
+### Changed
+
+- AtpClient 0.8.1 and `tptp` 0.2. SystemOnTPTP system names are checked
+  against the snapshot AtpClient ships, so `list_provers` and `run_prover`
+  answer from the first call without waiting for tptp.org; the list
+  refreshes in the background unless `config :atp_client, :sotptp,
+  auto_refresh: false`. `list_provers` lists the systems whose
+  capabilities include proving, not every system on the deployment.
+
+### Added
+
+- `query_backend` forwards `system` to `local_exec` and `starexec`: the
+  SystemOnTPTP name of the prover behind a wrapper script or StarExec
+  solver, which picks the prover-specific messages its output is read for.
 
 ## [0.6.0] - 2026-10-12
 
@@ -214,7 +236,7 @@ Docker image bundles it with E and, optionally, Isabelle/HOL.
   `tools/call`, and silent acknowledgement of `notifications/initialized`.
 - Declared MCP protocol revision `2024-11-05`.
 
-[Unreleased]: https://github.com/jcschuster/AtpMcp/compare/v0.6.0...HEAD
+[0.7.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.6.0
 [0.5.2]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.5.2
 [0.4.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.4.0

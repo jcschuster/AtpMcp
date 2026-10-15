@@ -146,7 +146,7 @@ whether it is reachable. Run it the way your MCP host runs the server:
 
 ```console
 $ docker run --rm -v "$PWD:/work:ro" ghcr.io/jcschuster/atp_mcp doctor
-atp_mcp 0.6.0
+atp_mcp 0.7.0
 config file: /work/atp_mcp.exs
 
 sotptp - SystemOnTPTP
@@ -210,7 +210,9 @@ vocabulary.
 | `raw`            | boolean | no       | Return the system's verbatim output instead of the SZS verdict    |
 
 Per-backend overrides are passed through (e.g. `binary` for `local_exec`,
-`timeout_ms` for `isabelle`, `base_url` for `starexec`).
+`timeout_ms` for `isabelle`, `base_url` for `starexec`, and `system` — the
+SystemOnTPTP name of the prover behind a `local_exec` binary or a `starexec`
+solver, for reading its output).
 
 ### SystemOnTPTP
 
