@@ -30,7 +30,7 @@ defmodule AtpMcp.MixProject do
 
   defp deps do
     [
-      {:atp_client, "~> 0.7.1"},
+      {:atp_client, "~> 0.8.0"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test},

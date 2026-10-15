@@ -21,7 +21,7 @@ defmodule AtpMcp do
   does not (system enumeration, multi-system fan-out, hand-written theories,
   source diagnostics):
 
-    * `list_provers`     — `AtpClient.SystemOnTptp.list_provers/0`;
+    * `list_provers`     — `AtpClient.SystemOnTptp.systems/1` that can prove;
     * `run_prover`       — `AtpClient.SystemOnTptp.query_system/3`;
     * `compare_provers`  — `AtpClient.SystemOnTptp.query_selected_systems/3`;
     * `prove_isabelle`   — `AtpClient.Isabelle.prove_theory/4` for hand-written
@@ -339,7 +339,8 @@ defmodule AtpMcp do
 
   defp call_tool("list_provers", _args) do
     {:ok,
-     sotptp().list_provers()
+     sotptp().systems(capability: :prove)
+     |> Enum.map(& &1.id)
      |> Enum.sort()
      |> Enum.join("\n")}
   end
@@ -410,7 +411,7 @@ defmodule AtpMcp do
   end
 
   defp opts_from(args, "local_exec"),
-    do: opts_from_filtered(args, [:binary, :args, :cpu_timeout_s, :wall_timeout_ms])
+    do: opts_from_filtered(args, [:binary, :args, :cpu_timeout_s, :wall_timeout_ms, :system])
 
   defp opts_from(args, "starexec"),
     do:
@@ -420,7 +421,8 @@ defmodule AtpMcp do
         :password,
         :request_timeout_ms,
         :poll_interval_ms,
-        :timeout_ms
+        :timeout_ms,
+        :system
       ])
 
   defp opts_from(args, _), do: opts_from_filtered(args, [:time_limit_sec])

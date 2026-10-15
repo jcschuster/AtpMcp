@@ -129,7 +129,7 @@ defmodule AtpMcpTest do
 
   describe "tools/call — protocol edge cases" do
     test "missing 'arguments' key defaults to empty map" do
-      expect(AtpMcp.MockSotptp, :list_provers, fn -> [] end)
+      expect(AtpMcp.MockSotptp, :systems, fn [capability: :prove] -> [] end)
       result = tool_call_no_args(6, "list_provers")
       assert text_of(result) == ""
     end
@@ -295,8 +295,8 @@ defmodule AtpMcpTest do
 
   describe "list_provers" do
     test "returns provers sorted alphabetically, one per line" do
-      expect(AtpMcp.MockSotptp, :list_provers, fn ->
-        ["Vampire---4.5", "E---2.0", "Z3---4.12"]
+      expect(AtpMcp.MockSotptp, :systems, fn [capability: :prove] ->
+        Enum.map(["Vampire---4.5", "E---2.0", "Z3---4.12"], &%AtpClient.System{id: &1})
       end)
 
       result = tool_call(10, "list_provers", %{})
@@ -304,7 +304,7 @@ defmodule AtpMcpTest do
     end
 
     test "returns empty string when no provers are available" do
-      expect(AtpMcp.MockSotptp, :list_provers, fn -> [] end)
+      expect(AtpMcp.MockSotptp, :systems, fn [capability: :prove] -> [] end)
       result = tool_call(11, "list_provers", %{})
       assert text_of(result) == ""
     end

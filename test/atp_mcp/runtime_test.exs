@@ -78,7 +78,7 @@ defmodule AtpMcp.RuntimeTest do
 
   describe "tools/call" do
     test "writes the tool response when the task completes", %{runtime: runtime} do
-      expect(AtpMcp.MockSotptp, :list_provers, fn -> ["E---2.0"] end)
+      expect(AtpMcp.MockSotptp, :systems, fn _ -> [%AtpClient.System{id: "E---2.0"}] end)
 
       deliver(runtime, %{
         "jsonrpc" => "2.0",
@@ -96,7 +96,7 @@ defmodule AtpMcp.RuntimeTest do
       # Each mock waits for the test to release it.
       test_pid = self()
 
-      expect(AtpMcp.MockSotptp, :list_provers, 2, fn ->
+      expect(AtpMcp.MockSotptp, :systems, 2, fn _ ->
         send(test_pid, {:mock_started, self()})
 
         receive do
@@ -116,8 +116,8 @@ defmodule AtpMcp.RuntimeTest do
       assert_receive {:mock_started, pid_a}, 500
       assert_receive {:mock_started, pid_b}, 500
 
-      send(pid_a, {:proceed, ["E---2.0"]})
-      send(pid_b, {:proceed, ["Vampire---4.5"]})
+      send(pid_a, {:proceed, [%AtpClient.System{id: "E---2.0"}]})
+      send(pid_b, {:proceed, [%AtpClient.System{id: "Vampire---4.5"}]})
 
       messages =
         for _ <- 1..2 do
@@ -138,11 +138,11 @@ defmodule AtpMcp.RuntimeTest do
     test "kills the in-flight task and suppresses the response", %{runtime: runtime} do
       test_pid = self()
 
-      expect(AtpMcp.MockSotptp, :list_provers, fn ->
+      expect(AtpMcp.MockSotptp, :systems, fn _ ->
         send(test_pid, {:mock_started, self()})
 
         receive do
-          :go -> ["never delivered"]
+          :go -> []
         end
       end)
 
@@ -184,7 +184,7 @@ defmodule AtpMcp.RuntimeTest do
 
     test "cancellation arriving after the task naturally completed is harmless",
          %{runtime: runtime} do
-      expect(AtpMcp.MockSotptp, :list_provers, fn -> ["E---2.0"] end)
+      expect(AtpMcp.MockSotptp, :systems, fn _ -> [%AtpClient.System{id: "E---2.0"}] end)
 
       deliver(runtime, %{
         "jsonrpc" => "2.0",
