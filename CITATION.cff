@@ -11,8 +11,8 @@ authors:
     given-names: Johannes
     orcid: "https://orcid.org/0009-0003-5339-7216"
     affiliation: "Otto-Friedrich-Universität Bamberg, Germany"
-version: "0.7.0"
-date-released: "2026-10-15"
+version: "0.8.0"
+date-released: "2026-10-27"
 license: MIT
 repository-code: "https://github.com/jcschuster/AtpMcp"
 url: "https://hexdocs.pm/atp_mcp"

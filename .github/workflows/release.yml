@@ -1,0 +1,49 @@
+name: release
+
+# Merging a pull request labelled "release" publishes v<@version in mix.exs>:
+# the GitHub release with its CHANGELOG section as notes, then the Docker
+# images and the skill ZIP. A release created with GITHUB_TOKEN starts no other
+# workflow, so this one calls docker.yml and skill.yml itself.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged && contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      SHA: ${{ github.event.pull_request.merge_commit_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - id: version
+        run: echo "tag=v$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)" >> "$GITHUB_OUTPUT"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          awk -v heading="## [${TAG#v}]" 'index($0, heading) == 1 { on = 1; next } on && /^## \[/ { exit } on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $TAG"; exit 1; }
+          gh release create "$TAG" --target "$SHA" --title "$TAG" --notes-file notes.md
+
+  docker:
+    needs: release
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+
+  skill:
+    needs: release
+    uses: ./.github/workflows/skill.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}

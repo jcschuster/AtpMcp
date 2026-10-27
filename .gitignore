@@ -25,5 +25,6 @@ atp_mcp-*.tar
 # Escript binary built via "mix escript.build".
 /atp_mcp
 
+.claude/
 
 .claude-config

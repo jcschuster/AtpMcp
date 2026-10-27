@@ -1,0 +1,34 @@
+name: release-pr
+
+# Pushing a commit whose message starts with "release:" to a branch other than
+# main opens a pull request into main labelled "release" (or labels the open
+# one). Merging it runs release.yml.
+
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr:
+    if: startsWith(github.event.head_commit.message, 'release:')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open or label the pull request
+        run: |
+          gh label create release --color 0e8a16 --description "Merging publishes a release" --force
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BRANCH" --label release \
+              --title "$(git log -1 --format=%s)" \
+              --body "Merging this pull request publishes the release: GitHub release, Docker images, and skill ZIP (release.yml)."
+          else
+            gh pr edit "$BRANCH" --add-label release
+          fi

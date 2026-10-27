@@ -1,12 +1,18 @@
 name: docker
 
-# Publishes ghcr.io/<owner>/atp_mcp on every v* tag:
+# Publishes ghcr.io/<owner>/atp_mcp for a v* tag, pushed by hand or released by
+# release.yml:
 #   :<version>, :latest                     SystemOnTPTP + local E   (amd64, arm64)
 #   :<version>-isabelle, :latest-isabelle   + Isabelle/HOL           (amd64)
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -16,6 +22,8 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     strategy:
       matrix:
         include:
@@ -27,6 +35,8 @@ jobs:
             platforms: linux/amd64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -42,7 +52,7 @@ jobs:
             latest=false
             suffix=${{ matrix.suffix }}
           tags: |
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
             type=raw,value=latest
       - uses: docker/build-push-action@v6
         with:
