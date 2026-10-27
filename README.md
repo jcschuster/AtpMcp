@@ -2,6 +2,13 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23044595.svg)](https://doi.org/10.5281/zenodo.23044595)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img alt="AtpMcp" src="assets/logo-light.svg" height="72">
+  </picture>
+</p>
+
 An [MCP](https://modelcontextprotocol.io) server that exposes
 [AtpClient](https://hex.pm/packages/atp_client)'s four theorem-prover
 backends — **SystemOnTPTP**, **StarExec**, **Isabelle**, and **LocalExec** —
@@ -45,9 +52,15 @@ the file reads:
     "atp": {
       "command": "docker",
       "args": [
-        "run", "-i", "--rm",
-        "-v", "${PWD}:/work:ro",
-        "-e", "STAREXEC_USER", "-e", "STAREXEC_PASS",
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${PWD}:/work:ro",
+        "-e",
+        "STAREXEC_USER",
+        "-e",
+        "STAREXEC_PASS",
         "ghcr.io/jcschuster/atp_mcp:latest"
       ],
       "env": { "STAREXEC_USER": "me", "STAREXEC_PASS": "…" }
@@ -136,6 +149,7 @@ Without any configuration:
 
   and set `config :atp_mcp, isabelle_autostart: false` to rule out a local
   one.
+
 - **StarExec** has no defaults; it needs `base_url`, `username`, and
   `password`.
 
@@ -189,9 +203,9 @@ arguments.
 Probes a backend's configuration and reachability. Returns `OK` or a
 descriptive error.
 
-| Argument  | Type   | Required | Description                                                       |
-| --------- | ------ | -------- | ----------------------------------------------------------------- |
-| `backend` | string | yes      | `sotptp` \| `isabelle` \| `local_exec` \| `starexec`              |
+| Argument  | Type   | Required | Description                                          |
+| --------- | ------ | -------- | ---------------------------------------------------- |
+| `backend` | string | yes      | `sotptp` \| `isabelle` \| `local_exec` \| `starexec` |
 
 Backend-specific override keys (`base_url`, `password`, `binary`, …) are
 forwarded through to the backend's `verify/1`.
@@ -204,12 +218,12 @@ verdict (`Theorem`, `Unsatisfiable`, `Satisfiable`, `CounterSatisfiable`,
 `GaveUp`, `Timeout`, `ResourceOut`, …). Call `describe_szs` for the full
 vocabulary.
 
-| Argument         | Type    | Required | Description                                                       |
-| ---------------- | ------- | -------- | ----------------------------------------------------------------- |
-| `backend`        | string  | yes      | `sotptp` \| `isabelle` \| `local_exec` \| `starexec`              |
-| `problem`        | string  | yes      | TPTP problem text                                                 |
-| `time_limit_sec` | integer | no       | Applied by backends that honour it (`sotptp`)                     |
-| `raw`            | boolean | no       | Return the system's verbatim output instead of the SZS verdict    |
+| Argument         | Type    | Required | Description                                                    |
+| ---------------- | ------- | -------- | -------------------------------------------------------------- |
+| `backend`        | string  | yes      | `sotptp` \| `isabelle` \| `local_exec` \| `starexec`           |
+| `problem`        | string  | yes      | TPTP problem text                                              |
+| `time_limit_sec` | integer | no       | Applied by backends that honour it (`sotptp`)                  |
+| `raw`            | boolean | no       | Return the system's verbatim output instead of the SZS verdict |
 
 Per-backend overrides are passed through (e.g. `binary` for `local_exec`,
 `timeout_ms` for `isabelle`, `base_url` for `starexec`, and `system` — the
@@ -226,12 +240,12 @@ Lists every theorem prover system available on SystemOnTPTP.
 
 Submits a TPTP problem to a specific prover and returns its SZS status.
 
-| Argument         | Type    | Required | Description                                           |
-| ---------------- | ------- | -------- | ----------------------------------------------------- |
-| `problem`        | string  | yes      | TPTP problem text                                     |
+| Argument         | Type    | Required | Description                                                                      |
+| ---------------- | ------- | -------- | -------------------------------------------------------------------------------- |
+| `problem`        | string  | yes      | TPTP problem text                                                                |
 | `system_id`      | string  | yes      | Prover ID from `list_provers`, or a bare name (`Vampire`) for the latest version |
-| `time_limit_sec` | integer | no       | Time limit in seconds                                 |
-| `raw`            | boolean | no       | Return the prover's verbatim output instead of the SZS verdict |
+| `time_limit_sec` | integer | no       | Time limit in seconds                                                            |
+| `raw`            | boolean | no       | Return the prover's verbatim output instead of the SZS verdict                   |
 
 #### `compare_provers`
 
@@ -245,11 +259,11 @@ E---3.5.1: CounterSatisfiable
 Nope: not a system on SystemOnTPTP (see list_provers)
 ```
 
-| Argument         | Type     | Required | Description                      |
-| ---------------- | -------- | -------- | -------------------------------- |
-| `problem`        | string   | yes      | TPTP problem text                |
+| Argument         | Type     | Required | Description                         |
+| ---------------- | -------- | -------- | ----------------------------------- |
+| `problem`        | string   | yes      | TPTP problem text                   |
 | `system_ids`     | string[] | yes      | Prover IDs or bare names to compare |
-| `time_limit_sec` | integer  | no       | Time limit per prover in seconds |
+| `time_limit_sec` | integer  | no       | Time limit per prover in seconds    |
 
 ### Isabelle
 
@@ -261,12 +275,12 @@ processed via `use_theories`. For TPTP/THF problems, use `query_backend`
 with `backend: "isabelle"` instead — that routes through `prove_tptp`.
 Session, host, port, and password come from configuration only.
 
-| Argument      | Type    | Required | Description                                            |
-| ------------- | ------- | -------- | ------------------------------------------------------ |
-| `theory`      | string  | yes      | Isabelle theory text (full or body only)               |
-| `theory_name` | string  | yes      | Theory name (also used as the `.thy` filename)         |
-| `timeout_ms`  | integer | no       | Overall `use_theories` timeout in milliseconds         |
-| `raw`         | boolean | no       | Return Isabelle's message text instead of the verdict  |
+| Argument      | Type    | Required | Description                                           |
+| ------------- | ------- | -------- | ----------------------------------------------------- |
+| `theory`      | string  | yes      | Isabelle theory text (full or body only)              |
+| `theory_name` | string  | yes      | Theory name (also used as the `.thy` filename)        |
+| `timeout_ms`  | integer | no       | Overall `use_theories` timeout in milliseconds        |
+| `raw`         | boolean | no       | Return Isabelle's message text instead of the verdict |
 
 ### Diagnostics
 
@@ -289,10 +303,10 @@ Symbols:
   plus : $i > $i (declared at 1:14)
 ```
 
-| Argument   | Type     | Required | Description                                             |
-| ---------- | -------- | -------- | ------------------------------------------------------- |
-| `problem`  | string   | yes      | TPTP problem text                                       |
-| `backends` | string[] | no       | Subset of `["local", "tptp4x"]`; default runs both      |
+| Argument   | Type     | Required | Description                                        |
+| ---------- | -------- | -------- | -------------------------------------------------- |
+| `problem`  | string   | yes      | TPTP problem text                                  |
+| `backends` | string[] | no       | Subset of `["local", "tptp4x"]`; default runs both |
 
 ## Example
 
