@@ -7,7 +7,9 @@ An [MCP](https://modelcontextprotocol.io) server that exposes
 backends — **SystemOnTPTP**, **StarExec**, **Isabelle**, and **LocalExec** —
 as tools for Claude Code and other MCP hosts.
 
-Speaks MCP revision `2025-11-25` over stdio (JSON-RPC 2.0).
+Speaks MCP revision `2026-07-28` over stdio (JSON-RPC 2.0), and only that
+revision: clients that need the `initialize` handshake (`2025-11-25` and
+earlier) are rejected.
 
 ## Quick start with Docker
 
@@ -146,7 +148,7 @@ whether it is reachable. Run it the way your MCP host runs the server:
 
 ```console
 $ docker run --rm -v "$PWD:/work:ro" ghcr.io/jcschuster/atp_mcp doctor
-atp_mcp 0.7.0
+atp_mcp 0.8.0
 config file: /work/atp_mcp.exs
 
 sotptp - SystemOnTPTP
@@ -307,6 +309,17 @@ Claude will call `compare_provers` directly and report the SZS results.
 Claude will call `query_backend` twice — once with `backend: "local_exec"`,
 once with `backend: "sotptp"` — and compare the verdicts.
 
+## Agent skill
+
+[`skills/atp-mcp/SKILL.md`](skills/atp-mcp/SKILL.md) is an
+[Agent Skill](https://agentskills.io) that teaches an agent to use these
+tools: the TPTP dialects and which provers accept them, a lint-then-prove
+workflow, and what each SZS verdict lets it conclude. It also lists tasks
+where a prover helps, such as autoformalisation, checking proofs, and
+finding counterexamples, so agents reach for the tools unprompted. To use
+it with Claude Code, copy the directory into `.claude/skills/` in your
+project or `~/.claude/skills/`.
+
 ## Cancellation and progress
 
 Long-running tool calls run inside their own Task. The MCP host can:
@@ -329,14 +342,14 @@ Long-running tool calls run inside their own Task. The MCP host can:
   config :atp_mcp, heartbeat_ms: 10_000
   ```
 
-## Forward note: MCP experimental Tasks primitive
+## Forward note: MCP Tasks extension
 
-The `2025-11-25` MCP revision incubates an experimental **Tasks** primitive
-(call-now / fetch-later, with a task handle for status polling and deferred
-result retrieval). That maps onto ATP workflows almost exactly. When the
-primitive stabilises, the long-running tools here should grow a
-task-returning variant, and a StarExec-style `submit_job` / `await_job`
-pair becomes natural to add.
+MCP **Tasks** (call now, fetch later through a task handle) fit ATP
+workflows almost exactly. Revision `2026-07-28` moved them out of the core
+protocol into the official extension `io.modelcontextprotocol/tasks`. Once
+MCP hosts support the extension, the long-running tools here should return
+tasks, which would also make a StarExec-style `submit_job` / `await_job`
+pair natural.
 
 ## License
 

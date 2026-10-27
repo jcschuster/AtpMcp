@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-27
+
+AtpMcp now speaks MCP revision `2026-07-28` only.
+
+### Upgrading
+
+- The MCP client must speak revision `2026-07-28`, which Claude Code does.
+  Every request has to carry `io.modelcontextprotocol/protocolVersion` and
+  `io.modelcontextprotocol/clientCapabilities` in `_meta`. A client that
+  opens with the `initialize` handshake (revision `2025-11-25` and earlier)
+  is rejected with `-32602`, and the error names the supported revision.
+  `initialize`, `notifications/initialized`, and `ping` are gone.
+
+### Added
+
+- `server/discover` reports the supported revision, capabilities, and
+  server identity. A request naming another revision gets an
+  `UnsupportedProtocolVersion` error (`-32022`) listing the supported one.
+- Every result carries `resultType: "complete"` and the server identity in
+  `_meta`; `server/discover` and `tools/list` carry caching hints (`ttlMs`,
+  `cacheScope`).
+- [`skills/atp-mcp/SKILL.md`](skills/atp-mcp/SKILL.md), an Agent Skill
+  describing the TPTP dialects and the provers that accept them, the tools
+  and backends, how to read SZS verdicts, and tasks such as
+  autoformalisation that call for a prover.
+
 ## [0.7.0] - 2026-10-15
 
 AtpMcp now runs on AtpClient 0.8 and `tptp` 0.2.
@@ -236,6 +262,7 @@ Docker image bundles it with E and, optionally, Isabelle/HOL.
   `tools/call`, and silent acknowledgement of `notifications/initialized`.
 - Declared MCP protocol revision `2024-11-05`.
 
+[0.8.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.8.0
 [0.7.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.6.0
 [0.5.2]: https://github.com/jcschuster/AtpMcp/releases/tag/v0.5.2

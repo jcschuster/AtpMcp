@@ -59,28 +59,29 @@ defmodule AtpMcp do
   configured it starts (or reuses) a local resident server; see
   `AtpMcp.IsabelleSession`.
 
-  ## Forward note: MCP experimental Tasks primitive
-
-  The `2025-11-25` MCP revision incubates a *Tasks* primitive for
-  long-running invocations (call-now / fetch-later, with a task handle for
-  status polling and deferred result retrieval). That maps almost exactly
-  onto ATP workflows. When the primitive stabilises, the long-running
-  tools here should grow a task-returning variant and a StarExec-style
-  submit/await pair becomes a natural addition.
-
   ## Protocol
 
-  Speaks MCP revision `2025-11-25`. The `initialize` handshake, `ping`,
-  `tools/list`, and `tools/call` are implemented; notifications are
-  accepted and silently acknowledged.
+  Speaks MCP revision `2026-07-28` only: every request carries its
+  protocol version and client capabilities in `_meta`, and requests
+  without them, including a legacy `initialize`, are rejected.
+  `server/discover`, `tools/list`, and `tools/call` are implemented;
+  notifications are accepted and silently acknowledged.
   """
 
   alias AtpClient.Result
   alias Tptp.{Analysis, Diagnostic}
   alias Tptp.Szs.Ontology
 
-  @protocol_version "2025-11-25"
+  @protocol_version "2026-07-28"
+  @supported_versions [@protocol_version]
   @server_version Mix.Project.config()[:version]
+  @server_info %{name: "atp", version: @server_version}
+
+  @version_key "io.modelcontextprotocol/protocolVersion"
+  @capabilities_key "io.modelcontextprotocol/clientCapabilities"
+
+  # The tool list changes only with the server version.
+  @list_ttl_ms 3_600_000
 
   @default_backends %{
     "sotptp" => AtpClient.SystemOnTptp,
@@ -226,46 +227,80 @@ defmodule AtpMcp do
           | {:tool_call, term(), String.t() | nil, map(), term() | nil}
           | {:cancel, term()}
           | :noop
-  def classify(%{"method" => "initialize", "id" => id}) do
-    {:reply,
-     %{
-       jsonrpc: "2.0",
-       id: id,
-       result: %{
-         protocolVersion: @protocol_version,
-         capabilities: %{tools: %{}},
-         serverInfo: %{name: "atp", version: @server_version}
-       }
-     }}
+  def classify(%{"id" => id} = request) do
+    case request |> request_meta() |> request_error() do
+      nil -> dispatch(request)
+      error -> {:reply, %{jsonrpc: "2.0", id: id, error: error}}
+    end
   end
 
-  def classify(%{"method" => "ping", "id" => id}) do
-    {:reply, %{jsonrpc: "2.0", id: id, result: %{}}}
+  def classify(notification), do: dispatch(notification)
+
+  defp request_meta(%{"params" => %{"_meta" => meta}}) when is_map(meta), do: meta
+  defp request_meta(_request), do: %{}
+
+  defp request_error(%{@version_key => @protocol_version, @capabilities_key => _}), do: nil
+
+  defp request_error(%{@version_key => @protocol_version}),
+    do: %{code: -32_602, message: "Invalid params: _meta lacks #{@capabilities_key}"}
+
+  defp request_error(%{@version_key => version}) do
+    %{
+      code: -32_022,
+      message: "Unsupported protocol version",
+      data: %{supported: @supported_versions, requested: version}
+    }
   end
 
-  def classify(%{"method" => "tools/list", "id" => id}) do
-    {:reply, %{jsonrpc: "2.0", id: id, result: %{tools: tool_schemas()}}}
+  # Also the answer to a legacy `initialize`: naming the supported version is
+  # the only diagnostic such a client can show its user.
+  defp request_error(_meta) do
+    %{
+      code: -32_602,
+      message:
+        "Invalid params: _meta lacks #{@version_key}; " <>
+          "this server speaks MCP #{Enum.join(@supported_versions, ", ")}",
+      data: %{supported: @supported_versions}
+    }
   end
 
-  def classify(%{"method" => "tools/call", "id" => id, "params" => params}) do
+  defp dispatch(%{"method" => "server/discover", "id" => id}) do
+    reply(id, %{
+      supportedVersions: @supported_versions,
+      capabilities: %{tools: %{}},
+      ttlMs: @list_ttl_ms,
+      cacheScope: "public"
+    })
+  end
+
+  defp dispatch(%{"method" => "tools/list", "id" => id}) do
+    reply(id, %{tools: tool_schemas(), ttlMs: @list_ttl_ms, cacheScope: "public"})
+  end
+
+  defp dispatch(%{"method" => "tools/call", "id" => id, "params" => params}) do
     name = Map.get(params, "name")
     args = Map.get(params, "arguments", %{})
     token = get_in(params, ["_meta", "progressToken"])
     {:tool_call, id, name, args, token}
   end
 
-  def classify(%{"method" => "notifications/cancelled", "params" => %{"requestId" => id}}),
+  defp dispatch(%{"method" => "notifications/cancelled", "params" => %{"requestId" => id}}),
     do: {:cancel, id}
 
-  def classify(%{"method" => method})
-      when method in ["notifications/initialized", "initialized"],
-      do: :noop
-
-  def classify(%{"id" => id}) do
+  defp dispatch(%{"id" => id}) do
     {:reply, %{jsonrpc: "2.0", id: id, error: %{code: -32_601, message: "Method not found"}}}
   end
 
-  def classify(_), do: :noop
+  defp dispatch(_), do: :noop
+
+  defp reply(id, result), do: {:reply, %{jsonrpc: "2.0", id: id, result: complete(result)}}
+
+  defp complete(result),
+    do:
+      Map.merge(result, %{
+        resultType: "complete",
+        _meta: %{"io.modelcontextprotocol/serverInfo" => @server_info}
+      })
 
   @typedoc """
   Outcome of a tool call: the text to render, tagged with whether it
@@ -290,13 +325,17 @@ defmodule AtpMcp do
   @doc false
   @spec tool_response(term(), tool_result()) :: map()
   def tool_response(id, {:ok, content}) do
-    %{jsonrpc: "2.0", id: id, result: %{content: [%{type: "text", text: content}]}}
+    %{jsonrpc: "2.0", id: id, result: complete(%{content: [%{type: "text", text: content}]})}
   end
 
   # MCP reports tool-level failures in-band: a normal result carrying
   # isError, not a JSON-RPC error (those are reserved for protocol faults).
   def tool_response(id, {:error, content}) do
-    %{jsonrpc: "2.0", id: id, result: %{content: [%{type: "text", text: content}], isError: true}}
+    %{
+      jsonrpc: "2.0",
+      id: id,
+      result: complete(%{content: [%{type: "text", text: content}], isError: true})
+    }
   end
 
   # --- Tool implementations ---

@@ -21,7 +21,7 @@ Manual integration testing pipes JSON-RPC 2.0 messages to the binary, or checks 
 setup with the doctor:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | ./atp_mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' | ./atp_mcp
 ./atp_mcp doctor sotptp local_exec
 ```
 
@@ -59,12 +59,18 @@ stdin (newline-delimited JSON-RPC 2.0)
 - stdout is the protocol channel: never print to it outside `AtpMcp.Runtime`. Logger
   goes to stderr (`config/config.exs`, build time — it cannot be changed at runtime).
 - Notifications (no `"id"` field) must return `nil` — not an error response.
-- The protocol version is `"2025-11-25"`.
+- The protocol version is `"2026-07-28"`, and only that: every request must carry
+  `io.modelcontextprotocol/protocolVersion` and `clientCapabilities` in `_meta`
+  (`classify/1` rejects it otherwise). There is no `initialize` and no `ping`.
+  Every result goes through `complete/1`, which adds `resultType` and `serverInfo`.
 - Tool results are `%{content: [%{type: "text", text: ...}]}`, with `isError: true`
   for tool-level failures.
 
 ## Releasing
 
 Bump `@version` in `mix.exs`, `version`/`date-released` in `CITATION.cff`, `version`
-in `.zenodo.json`, and date the CHANGELOG section. A `v*` tag publishes the Docker
-images (`.github/workflows/docker.yml`).
+in `.zenodo.json`, and date the CHANGELOG section. Commit that on a branch with a
+message starting `release:` and push: `release-pr.yml` opens a PR into `main`
+labelled `release`. Merging it runs `release.yml`, which creates the GitHub release
+`v<@version>` with the CHANGELOG section as notes and calls `docker.yml` (images)
+and `skill.yml` (skill ZIP). Hex publishing (`mix hex.publish`) stays manual.

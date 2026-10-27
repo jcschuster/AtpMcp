@@ -8,7 +8,9 @@ defmodule AtpMcpTest do
 
   setup :verify_on_exit!
 
-  defp rpc(msg) do
+  defp rpc(msg), do: msg |> modern() |> rpc_bare()
+
+  defp rpc_bare(msg) do
     line = Jason.encode!(msg)
 
     case AtpMcp.handle_rpc(line) do
@@ -58,24 +60,71 @@ defmodule AtpMcpTest do
     end
   end
 
-  describe "initialize" do
-    test "advertises MCP revision 2025-11-25 and server info" do
-      {:ok, resp} =
-        rpc(%{"jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => %{}})
+  describe "server/discover" do
+    test "reports the revision, capabilities, identity and caching hints" do
+      {:ok, resp} = rpc(%{"jsonrpc" => "2.0", "id" => 10, "method" => "server/discover"})
+      result = resp["result"]
 
-      assert resp["id"] == 1
-      assert resp["result"]["protocolVersion"] == "2025-11-25"
-      assert resp["result"]["serverInfo"]["name"] == "atp"
-      assert is_binary(resp["result"]["serverInfo"]["version"])
-      assert get_in(resp, ["result", "capabilities", "tools"]) == %{}
+      assert result["resultType"] == "complete"
+      assert result["supportedVersions"] == ["2026-07-28"]
+      assert result["capabilities"]["tools"] == %{}
+      assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "atp"
+      assert result["ttlMs"] > 0
+      assert result["cacheScope"] == "public"
     end
   end
 
-  describe "ping" do
-    test "returns empty result" do
-      {:ok, resp} = rpc(%{"jsonrpc" => "2.0", "id" => 2, "method" => "ping"})
-      assert resp["id"] == 2
-      assert resp["result"] == %{}
+  describe "request metadata" do
+    test "a request without a protocol version is rejected with -32602 naming 2026-07-28" do
+      {:ok, resp} = rpc_bare(%{"jsonrpc" => "2.0", "id" => 11, "method" => "tools/list"})
+      assert resp["id"] == 11
+      assert resp["error"]["code"] == -32_602
+      assert resp["error"]["data"]["supported"] == ["2026-07-28"]
+    end
+
+    test "a legacy initialize is rejected the same way" do
+      {:ok, resp} =
+        rpc_bare(%{"jsonrpc" => "2.0", "id" => 12, "method" => "initialize", "params" => %{}})
+
+      assert resp["error"]["code"] == -32_602
+      assert resp["error"]["message"] =~ "2026-07-28"
+    end
+
+    test "a request without clientCapabilities is rejected with -32602" do
+      {:ok, resp} =
+        rpc_bare(%{
+          "jsonrpc" => "2.0",
+          "id" => 13,
+          "method" => "tools/list",
+          "params" => %{"_meta" => %{"io.modelcontextprotocol/protocolVersion" => "2026-07-28"}}
+        })
+
+      assert resp["error"]["code"] == -32_602
+    end
+
+    test "another version is rejected with -32022 listing the supported one" do
+      {:ok, resp} =
+        rpc(%{
+          "jsonrpc" => "2.0",
+          "id" => 14,
+          "method" => "tools/list",
+          "params" => %{"_meta" => %{"io.modelcontextprotocol/protocolVersion" => "2025-11-25"}}
+        })
+
+      assert resp["error"]["code"] == -32_022
+      assert resp["error"]["data"]["supported"] == ["2026-07-28"]
+      assert resp["error"]["data"]["requested"] == "2025-11-25"
+    end
+
+    test "a tool result carries resultType and the server identity" do
+      {:ok, resp} = tool_call_no_args(15, "describe_szs")
+      assert resp["result"]["resultType"] == "complete"
+      assert resp["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "atp"
+    end
+
+    test "ping no longer exists" do
+      {:ok, resp} = rpc(%{"jsonrpc" => "2.0", "id" => 16, "method" => "ping"})
+      assert resp["error"]["code"] == -32_601
     end
   end
 
@@ -98,6 +147,12 @@ defmodule AtpMcpTest do
              ]
     end
 
+    test "carries caching hints" do
+      {:ok, resp} = rpc(%{"jsonrpc" => "2.0", "id" => 17, "method" => "tools/list"})
+      assert is_integer(resp["result"]["ttlMs"])
+      assert resp["result"]["cacheScope"] == "public"
+    end
+
     test "each tool has an inputSchema" do
       {:ok, resp} = rpc(%{"jsonrpc" => "2.0", "id" => 4, "method" => "tools/list"})
       tools = resp["result"]["tools"]
@@ -106,14 +161,6 @@ defmodule AtpMcpTest do
   end
 
   describe "notifications" do
-    test "notifications/initialized produces no response" do
-      assert :silent == rpc(%{"jsonrpc" => "2.0", "method" => "notifications/initialized"})
-    end
-
-    test "initialized produces no response" do
-      assert :silent == rpc(%{"jsonrpc" => "2.0", "method" => "initialized"})
-    end
-
     test "unknown notification without id produces no response" do
       assert :silent == rpc(%{"jsonrpc" => "2.0", "method" => "notifications/foo"})
     end

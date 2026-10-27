@@ -30,7 +30,7 @@ defmodule AtpMcp.RuntimeTest do
     {:ok, runtime: name}
   end
 
-  defp deliver(runtime, msg), do: Runtime.deliver(Jason.encode!(msg), runtime)
+  defp deliver(runtime, msg), do: msg |> modern() |> Jason.encode!() |> Runtime.deliver(runtime)
 
   defp assert_response(id, runtime) do
     Runtime.sync(runtime)
@@ -45,11 +45,11 @@ defmodule AtpMcp.RuntimeTest do
   # ---------------------------------------------------------------------------
 
   describe "synchronous protocol methods" do
-    test "initialize is written immediately", %{runtime: runtime} do
-      deliver(runtime, %{"jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => %{}})
+    test "server/discover is written immediately", %{runtime: runtime} do
+      deliver(runtime, %{"jsonrpc" => "2.0", "id" => 1, "method" => "server/discover"})
 
       response = assert_response(1, runtime)
-      assert response["result"]["protocolVersion"] == "2025-11-25"
+      assert response["result"]["supportedVersions"] == ["2026-07-28"]
     end
 
     test "tools/list is written immediately", %{runtime: runtime} do
@@ -59,8 +59,8 @@ defmodule AtpMcp.RuntimeTest do
       assert is_list(response["result"]["tools"])
     end
 
-    test "notifications/initialized produces no output", %{runtime: runtime} do
-      deliver(runtime, %{"jsonrpc" => "2.0", "method" => "notifications/initialized"})
+    test "a notification produces no output", %{runtime: runtime} do
+      deliver(runtime, %{"jsonrpc" => "2.0", "method" => "notifications/foo"})
       Runtime.sync(runtime)
       refute_received {:io_write, _}
     end
