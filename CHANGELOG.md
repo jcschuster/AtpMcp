@@ -26,7 +26,7 @@ AtpMcp now speaks MCP revision `2026-07-28` only.
 - Every result carries `resultType: "complete"` and the server identity in
   `_meta`; `server/discover` and `tools/list` carry caching hints (`ttlMs`,
   `cacheScope`).
-- [`skills/atp-mcp/SKILL.md`](skills/atp-mcp/SKILL.md), an Agent Skill
+- [`skills/atp-mcp/SKILL.md`](https://github.com/jcschuster/AtpMcp/blob/v0.8.0/skills/atp-mcp/SKILL.md), an Agent Skill
   describing the TPTP dialects and the provers that accept them, the tools
   and backends, how to read SZS verdicts, and tasks such as
   autoformalisation that call for a prover.

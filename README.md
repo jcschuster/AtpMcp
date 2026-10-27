@@ -311,7 +311,7 @@ once with `backend: "sotptp"` — and compare the verdicts.
 
 ## Agent skill
 
-[`skills/atp-mcp/SKILL.md`](skills/atp-mcp/SKILL.md) is an
+[`skills/atp-mcp/SKILL.md`](https://github.com/jcschuster/AtpMcp/blob/main/skills/atp-mcp/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches an agent to use these
 tools: the TPTP dialects and which provers accept them, a lint-then-prove
 workflow, and what each SZS verdict lets it conclude. It also lists tasks
