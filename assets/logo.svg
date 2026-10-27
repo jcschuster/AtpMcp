@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="AtpMcp logo">
+  <title>AtpMcp logo</title>
+  <rect width="64" height="64" rx="14" fill="#1f1d2e"/>
+  <g transform="translate(4 4) scale(0.875)"><path d="M3 34A29 10.5 0 0 1 61 34" stroke="#e0def4" stroke-width="2.4" fill="none" transform="rotate(-22 32 34)" stroke-linecap="round" stroke-linejoin="round"/><circle cx="5.72" cy="29.56" r="3.4" fill="#c4a7e7" transform="rotate(-22 32 34)"/><circle cx="32" cy="34" r="16" fill="#ebbcba"/><path d="M26 25V43M26 34H39" stroke="#26233a" stroke-width="4.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M61 34A29 10.5 0 0 1 3 34" stroke="#e0def4" stroke-width="2.4" fill="none" transform="rotate(-22 32 34)" stroke-linecap="round" stroke-linejoin="round"/><g transform="rotate(-22 32 34) translate(55.76 40.02) rotate(30)"><rect x="-8" y="-2" width="5" height="4" rx="1" fill="#9ccfd8"/><rect x="3" y="-2" width="5" height="4" rx="1" fill="#9ccfd8"/><rect x="-3" y="-3" width="6" height="6" rx="1.5" fill="#26233a" stroke="#f6c177" stroke-width="1.5"/></g></g>
+</svg>
