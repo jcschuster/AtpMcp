@@ -47,6 +47,7 @@ RUN useradd --create-home --shell /bin/bash atp
 COPY --from=build /src/atp_mcp /usr/local/bin/atp_mcp
 
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+LABEL io.modelcontextprotocol.server.name="io.github.jcschuster/atp_mcp"
 USER atp
 WORKDIR /work
 ENTRYPOINT ["atp_mcp"]

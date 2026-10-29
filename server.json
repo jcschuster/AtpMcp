@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jcschuster/atp_mcp",
+  "title": "AtpMcp",
+  "description": "Theorem provers for agents: SystemOnTPTP, StarExec, Isabelle and local ATPs, with SZS verdicts.",
+  "repository": {
+    "url": "https://github.com/jcschuster/AtpMcp",
+    "source": "github"
+  },
+  "version": "0.8.1",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/jcschuster/atp_mcp:0.8.1",
+      "transport": { "type": "stdio" }
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/jcschuster/atp_mcp:0.8.1-isabelle",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

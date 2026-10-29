@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-10-29
+
+Add `server.json` for release on `mcp-publisher`, and give a label in the Dockerfile for ghcr release.
+
 ## [0.8.0] - 2026-10-27
 
 AtpMcp now speaks MCP revision `2026-07-28` only.
