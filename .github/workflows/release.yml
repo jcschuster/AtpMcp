@@ -27,6 +27,17 @@ jobs:
           ref: ${{ env.SHA }}
       - id: version
         run: echo "tag=v$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)" >> "$GITHUB_OUTPUT"
+      - name: Check server.json matches mix.exs
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          v="${TAG#v}"
+          jq -e --arg v "$v" '
+            .version == $v and
+            [.packages[].identifier] == ["ghcr.io/jcschuster/atp_mcp:\($v)",
+                                         "ghcr.io/jcschuster/atp_mcp:\($v)-isabelle"]
+          ' server.json > /dev/null \
+            || { echo "server.json is not at $v (version and both image tags)"; exit 1; }
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,3 +58,28 @@ jobs:
     uses: ./.github/workflows/skill.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
+
+  mcp-registry:
+    needs: [release, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      PUBLISHER_VERSION: v1.8.6
+      PUBLISHER_SHA256: 1fbe93fc0783c2394d8012c8d6e50a59e98cb2cc2d216264cc69f405d0e21340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Install mcp-publisher
+        run: |
+          curl -sSfL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Log in with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish server.json
+        run: ./mcp-publisher publish
