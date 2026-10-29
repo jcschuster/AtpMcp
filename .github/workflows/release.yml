@@ -22,7 +22,7 @@ jobs:
     env:
       SHA: ${{ github.event.pull_request.merge_commit_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.SHA }}
       - id: version
@@ -70,7 +70,7 @@ jobs:
       PUBLISHER_VERSION: v1.8.6
       PUBLISHER_SHA256: 1fbe93fc0783c2394d8012c8d6e50a59e98cb2cc2d216264cc69f405d0e21340
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.TAG }}
       - name: Install mcp-publisher

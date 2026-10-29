@@ -21,7 +21,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Open or label the pull request
         run: |
           gh label create release --color 0e8a16 --description "Merging publishes a release" --force
