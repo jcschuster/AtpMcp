@@ -1,6 +1,7 @@
 # AtpMcp
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23044595.svg)](https://doi.org/10.5281/zenodo.23044595)
+[![jcschuster/AtpMcp MCP server](https://glama.ai/mcp/servers/jcschuster/AtpMcp/badges/score.svg)](https://glama.ai/mcp/servers/jcschuster/AtpMcp)
 
 <p align="center">
   <picture>
